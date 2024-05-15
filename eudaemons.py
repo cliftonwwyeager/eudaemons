@@ -13,24 +13,45 @@ import pickle
 def ip_to_int(ip):
     return int.from_bytes(scapy.inet_aton(ip), 'big')
 
-def capture_packets():
+def capture_packets(repeat_count=1):
     packets = scapy.sniff(count=100000, filter="tcp")
     raw_data = []
     for packet in packets:
         if scapy.IP in packet and scapy.TCP in packet:
             payload = bytes(packet[scapy.TCP].payload) if packet[scapy.TCP].payload else b''
-            application_protocol = packet[scapy.TCP].dport if packet[scapy.TCP].dport in [80, 443, 22, 3389, 5900, 21, 8080, 8443, 389, 139, 445, 2375, 1433] else 0  
+            application_protocol = packet[scapy.TCP].dport if packet[scapy.TCP].dport in [80, 443, 22] else 0  # Example protocols: HTTP, HTTPS, SSH
             packet_dict = {
                 "src": ip_to_int(packet[scapy.IP].src),
                 "dst": ip_to_int(packet[scapy.IP].dst),
                 "ttl": packet[scapy.IP].ttl,
                 "sport": packet[scapy.TCP].sport,
                 "dport": packet[scapy.TCP].dport,
-                "payload": int.from_bytes(payload[:4], 'big') if payload else 0,
+                "payload": int.from_bytes(payload[:4], 'big') if payload else 0,  # Use first 4 bytes of payload
                 "application_protocol": application_protocol
             }
             raw_data.append(packet_dict)
-    return pd.DataFrame(raw_data)
+    df = pd.DataFrame(raw_data)
+    return pd.concat([df] * repeat_count, ignore_index=True)
+
+def read_malicious_packets(pcap_file, repeat_count=1):
+    packets = scapy.rdpcap(pcap_file)
+    raw_data = []
+    for packet in packets:
+        if scapy.IP in packet and scapy.TCP in packet:
+            payload = bytes(packet[scapy.TCP].payload) if packet[scapy.TCP].payload else b''
+            application_protocol = packet[scapy.TCP].dport if packet[scapy.TCP].dport in [80, 443, 22] else 0  # Example protocols: HTTP, HTTPS, SSH
+            packet_dict = {
+                "src": ip_to_int(packet[scapy.IP].src),
+                "dst": ip_to_int(packet[scapy.IP].dst),
+                "ttl": packet[scapy.IP].ttl,
+                "sport": packet[scapy.TCP].sport,
+                "dport": packet[scapy.TCP].dport,
+                "payload": int.from_bytes(payload[:4], 'big') if payload else 0,  # Use first 4 bytes of payload
+                "application_protocol": application_protocol
+            }
+            raw_data.append(packet_dict)
+    df = pd.DataFrame(raw_data)
+    return pd.concat([df] * repeat_count, ignore_index=True)
 
 def build_network(input_dim, params):
     model = Sequential([
@@ -48,13 +69,18 @@ def build_network(input_dim, params):
 def eval_network(individual):
     params = dict(zip(['first_layer', 'second_layer', 'dropout_rate', 'learning_rate'], individual))
     model = build_network(7, params)
-    packets = capture_packets()
-    if not packets.empty:
+    normal_packets = capture_packets(repeat_count=10)
+    malicious_packets = read_malicious_packets('malicious.pcap', repeat_count=10)
+    if not normal_packets.empty and not malicious_packets.empty:
+        normal_packets['label'] = 0
+        malicious_packets['label'] = 1
+        packets = pd.concat([normal_packets, malicious_packets], ignore_index=True)
         scaler = StandardScaler()
         data = scaler.fit_transform(packets[['src', 'dst', 'ttl', 'sport', 'dport', 'payload', 'application_protocol']])
+        labels = packets['label'].values
         split_idx = int(len(data) * 0.8)
-        train_data, train_labels = data[:split_idx], np.random.randint(2, size=split_idx)
-        test_data, test_labels = data[split_idx:], np.random.randint(2, size=len(data) - split_idx)
+        train_data, train_labels = data[:split_idx], labels[:split_idx]
+        test_data, test_labels = data[split_idx:], labels[split_idx:]
         steps_per_epoch = len(train_data) // 10
         model.fit(train_data, train_labels, epochs=10, batch_size=10, steps_per_epoch=steps_per_epoch, verbose=0)
         _, accuracy = model.evaluate(test_data, test_labels, verbose=0)
@@ -84,12 +110,26 @@ def main():
     best_individual = tools.selBest(population, k=1)[0]
     best_params = dict(zip(['first_layer', 'second_layer', 'dropout_rate', 'learning_rate'], best_individual))
     final_model = build_network(7, best_params)
-    final_scaler = StandardScaler()
-    data = pd.DataFrame([[0, 0, 0, 0, 0, 0, 0]] * 10, columns=['src', 'dst', 'ttl', 'sport', 'dport', 'payload', 'application_protocol'])
-    final_scaler.fit(data)
+    normal_packets = capture_packets(repeat_count=10)
+    malicious_packets = read_malicious_packets('malicious.pcap', repeat_count=10)
+    normal_packets['label'] = 0
+    malicious_packets['label'] = 1
+    packets = pd.concat([normal_packets, malicious_packets], ignore_index=True)
+    scaler = StandardScaler()
+    data = scaler.fit_transform(packets[['src', 'dst', 'ttl', 'sport', 'dport', 'payload', 'application_protocol']])
+    labels = packets['label'].values
+    split_idx = int(len(data) * 0.8)
+    train_data, train_labels = data[:split_idx], labels[:split_idx]
+    test_data, test_labels = data[split_idx:], labels[split_idx:]
+    final_model.fit(train_data, train_labels, epochs=10, batch_size=10, verbose=0)
+    
+    # Save the final model and scaler
     final_model.save('final_model.h5')
     with open('scaler.pkl', 'wb') as f:
-        pickle.dump(final_scaler, f)
+        pickle.dump(scaler, f)
+    
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
