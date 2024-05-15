@@ -18,18 +18,20 @@ def capture_packets():
 
 def preprocess_data(data, scaler):
     try:
-        return pd.DataFrame(scaler.transform(data), columns=['src', 'dst', 'ttl'])
+        return pd.DataFrame(scaler.transform(data), columns=['timestamp', 'proto', 'length', 'flags', 'window_size'])
     except Exception as e:
         logging.error(f"Error during data preprocessing: {e}")
         return pd.DataFrame()
 
-def detect_anomalies(encoder, classifier, data):
+def detect_anomalies(cnn_model, bnn_model, scaler, data):
     if data.empty:
         return []
     try:
-        encoded_data = encoder.predict(data)
-        predictions = classifier.predict(encoded_data)
-        return predictions
+        processed_data = preprocess_data(data, scaler)
+        cnn_predictions = cnn_model.predict(processed_data)
+        bnn_predictions = bnn_model.predict(tf.constant(processed_data, dtype=tf.float32))
+        combined_predictions = (cnn_predictions > 0.5) | (bnn_predictions > 0.5)
+        return combined_predictions
     except Exception as e:
         logging.error(f"Error during anomaly detection: {e}")
         return []
@@ -47,8 +49,8 @@ def send_to_elasticsearch(docs):
 
 def main():
     try:
-        encoder = tf.keras.models.load_model('encoder_model.h5')
-        classifier = tf.keras.models.load_model('classifier_model.h5')
+        cnn_model = tf.keras.models.load_model('optimized_cnn_model.h5')
+        bnn_model = tf.keras.models.load_model('optimized_bnn_model.h5')
         with open('scaler.pkl', 'rb') as f:
             scaler = pickle.load(f)
     except Exception as e:
@@ -58,11 +60,10 @@ def main():
     while True:
         packets = capture_packets()
         if packets:
-            data = pd.DataFrame([{'src': p[scapy.IP].src, 'dst': p[scapy.IP].dst, 'ttl': p[scapy.IP].ttl} for p in packets if scapy.IP in p])
+            data = pd.DataFrame([{'timestamp': p.time, 'proto': p[scapy.IP].proto, 'length': len(p), 'flags': getattr(p[scapy.TCP], 'flags', 0), 'window_size': getattr(p[scapy.TCP], 'window', 0)} for p in packets if scapy.IP in p])
             if not data.empty:
-                processed_data = preprocess_data(data, scaler)
-                anomalies = detect_anomalies(encoder, classifier, processed_data)
-                anomaly_docs = data[anomalies > 0.5].to_dict(orient='records')
+                anomalies = detect_anomalies(cnn_model, bnn_model, scaler, data)
+                anomaly_docs = data[anomalies].to_dict(orient='records')
                 if anomaly_docs:
                     send_to_elasticsearch(anomaly_docs)
 
