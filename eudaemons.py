@@ -19,14 +19,14 @@ def capture_packets():
     for packet in packets:
         if scapy.IP in packet and scapy.TCP in packet:
             payload = bytes(packet[scapy.TCP].payload) if packet[scapy.TCP].payload else b''
-            application_protocol = packet[scapy.TCP].dport if packet[scapy.TCP].dport in [80, 443, 22, 3389, 5900, 21, 8080, 8443, 389, 139, 445, 2375, 1433] else 0  # Example protocols: HTTP, HTTPS, SSH
+            application_protocol = packet[scapy.TCP].dport if packet[scapy.TCP].dport in [80, 443, 22, 3389, 5900, 21, 8080, 8443, 389, 139, 445, 2375, 1433] else 0  
             packet_dict = {
                 "src": ip_to_int(packet[scapy.IP].src),
                 "dst": ip_to_int(packet[scapy.IP].dst),
                 "ttl": packet[scapy.IP].ttl,
                 "sport": packet[scapy.TCP].sport,
                 "dport": packet[scapy.TCP].dport,
-                "payload": int.from_bytes(payload[:4], 'big') if payload else 0,  # Use first 4 bytes of payload
+                "payload": int.from_bytes(payload[:4], 'big') if payload else 0,
                 "application_protocol": application_protocol
             }
             raw_data.append(packet_dict)
