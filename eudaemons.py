@@ -19,14 +19,14 @@ def capture_packets(repeat_count=1):
     for packet in packets:
         if scapy.IP in packet and scapy.TCP in packet:
             payload = bytes(packet[scapy.TCP].payload) if packet[scapy.TCP].payload else b''
-            application_protocol = packet[scapy.TCP].dport if packet[scapy.TCP].dport in [80, 443, 22] else 0  # Example protocols: HTTP, HTTPS, SSH
+            application_protocol = packet[scapy.TCP].dport if packet[scapy.TCP].dport in [80, 443, 22] else 0
             packet_dict = {
                 "src": ip_to_int(packet[scapy.IP].src),
                 "dst": ip_to_int(packet[scapy.IP].dst),
                 "ttl": packet[scapy.IP].ttl,
                 "sport": packet[scapy.TCP].sport,
                 "dport": packet[scapy.TCP].dport,
-                "payload": int.from_bytes(payload[:4], 'big') if payload else 0,  # Use first 4 bytes of payload
+                "payload": int.from_bytes(payload[:4], 'big') if payload else 0,
                 "application_protocol": application_protocol
             }
             raw_data.append(packet_dict)
@@ -39,14 +39,14 @@ def read_malicious_packets(pcap_file, repeat_count=1):
     for packet in packets:
         if scapy.IP in packet and scapy.TCP in packet:
             payload = bytes(packet[scapy.TCP].payload) if packet[scapy.TCP].payload else b''
-            application_protocol = packet[scapy.TCP].dport if packet[scapy.TCP].dport in [80, 443, 22] else 0  # Example protocols: HTTP, HTTPS, SSH
+            application_protocol = packet[scapy.TCP].dport if packet[scapy.TCP].dport in [80, 443, 22] else 0
             packet_dict = {
                 "src": ip_to_int(packet[scapy.IP].src),
                 "dst": ip_to_int(packet[scapy.IP].dst),
                 "ttl": packet[scapy.IP].ttl,
                 "sport": packet[scapy.TCP].sport,
                 "dport": packet[scapy.TCP].dport,
-                "payload": int.from_bytes(payload[:4], 'big') if payload else 0,  # Use first 4 bytes of payload
+                "payload": int.from_bytes(payload[:4], 'big') if payload else 0,
                 "application_protocol": application_protocol
             }
             raw_data.append(packet_dict)
@@ -122,14 +122,9 @@ def main():
     train_data, train_labels = data[:split_idx], labels[:split_idx]
     test_data, test_labels = data[split_idx:], labels[split_idx:]
     final_model.fit(train_data, train_labels, epochs=10, batch_size=10, verbose=0)
-    
-    # Save the final model and scaler
     final_model.save('final_model.h5')
     with open('scaler.pkl', 'wb') as f:
         pickle.dump(scaler, f)
     
-if __name__ == "__main__":
-    main()
-
 if __name__ == "__main__":
     main()
