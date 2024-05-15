@@ -5,8 +5,8 @@ import tensorflow as tf
 from sklearn.preprocessing import StandardScaler
 import pandas as pd
 import logging
+import pickle
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
 
 def capture_packets():
@@ -35,7 +35,7 @@ def detect_anomalies(encoder, classifier, data):
         return []
 
 def send_to_elasticsearch(docs):
-    es = Elasticsearch("http://localhost:9200")  # Adjust as needed
+    es = Elasticsearch("http://localhost:9200")
     index_name = 'network-anomalies'
     for doc in docs:
         doc['timestamp'] = datetime.now().isoformat()
@@ -46,7 +46,6 @@ def send_to_elasticsearch(docs):
             logging.error(f"Error sending document to Elasticsearch: {e}")
 
 def main():
-    # Load models and scaler
     try:
         encoder = tf.keras.models.load_model('encoder_model.h5')
         classifier = tf.keras.models.load_model('classifier_model.h5')
