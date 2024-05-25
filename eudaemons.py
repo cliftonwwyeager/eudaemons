@@ -1,7 +1,7 @@
 import dpkt
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.layers import Conv3D, MaxPooling3D, Flatten, Dense, Dropout, Input
+from tensorflow.keras.layers import Conv3D, MaxPooling3D, Flatten, Dense, Dropout, Input, LSTM, TimeDistributed
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
@@ -38,18 +38,22 @@ def process_pcap_to_bytes(file_path, max_packet_length=1500):
     
     return np.array(packets), np.array(labels)
 
-def build_cnn_model(input_shape):
+def build_cnn_lstm_model(input_shape):
     input_layer = Input(shape=input_shape)
-    x = Conv3D(filters=32, kernel_size=(3, 3, 3), activation='relu')(input_layer)
-    x = MaxPooling3D(pool_size=(2, 2, 2))(x)
+    x = TimeDistributed(Conv3D(filters=32, kernel_size=(3, 3, 3), activation='relu'))(input_layer)
+    x = TimeDistributed(MaxPooling3D(pool_size=(2, 2, 2)))(x)
+    x = TimeDistributed(Dropout(0.5))(x)
+    x = TimeDistributed(Conv3D(filters=64, kernel_size=(3, 3, 3), activation='relu'))(x)
+    x = TimeDistributed(MaxPooling3D(pool_size=(2, 2, 2)))(x)
+    x = TimeDistributed(Dropout(0.5))(x)
+    x = TimeDistributed(Conv3D(filters=128, kernel_size=(3, 3, 3), activation='relu'))(x)
+    x = TimeDistributed(MaxPooling3D(pool_size=(2, 2, 2)))(x)
+    x = TimeDistributed(Dropout(0.5))(x)
+    x = TimeDistributed(Flatten())(x)
+    x = LSTM(128, activation='relu', return_sequences=True)(x)
     x = Dropout(0.5)(x)
-    x = Conv3D(filters=64, kernel_size=(3, 3, 3), activation='relu')(x)
-    x = MaxPooling3D(pool_size=(2, 2, 2))(x)
+    x = LSTM(64, activation='relu')(x)
     x = Dropout(0.5)(x)
-    x = Conv3D(filters=128, kernel_size=(3, 3, 3), activation='relu')(x)
-    x = MaxPooling3D(pool_size=(2, 2, 2))(x)
-    x = Dropout(0.5)(x)
-    x = Flatten()(x)
     x = Dense(128, activation='relu')(x)
     x = Dropout(0.5)(x)
     output_layer = Dense(1, activation='sigmoid')(x)
@@ -71,15 +75,15 @@ def train_on_gpu(model, X_train, y_train, X_val, y_val, epochs=50, batch_size=32
 
 def process_and_train(file_path):
     packets, labels = process_pcap_to_bytes(file_path)
-    packets = packets.reshape(-1, packets.shape[1], 1, 1, 1)
+    packets = packets.reshape(-1, packets.shape[0], packets.shape[1], 1, 1)
 
     X_train, X_test, y_train, y_test = train_test_split(packets, labels, test_size=0.2, random_state=42)
 
-    cnn_model = build_cnn_model((X_train.shape[1], 1, 1, 1))
-    trained_cnn_model = train_on_gpu(cnn_model, X_train, y_train, X_test, y_test)
+    cnn_lstm_model = build_cnn_lstm_model((X_train.shape[1], X_train.shape[2], 1, 1))
+    trained_cnn_lstm_model = train_on_gpu(cnn_lstm_model, X_train, y_train, X_test, y_test)
 
-    trained_cnn_model.save('optimized_cnn_model.h5')
+    trained_cnn_lstm_model.save('optimized_cnn_lstm_model.h5')
     
-    return trained_cnn_model
+    return trained_cnn_lstm_model
 
-cnn_model = process_and_train('path_to_pcap_file.pcap')
+cnn_lstm_model = process_and_train('path_to_pcap_file.pcap')
