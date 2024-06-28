@@ -7,15 +7,15 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.model_selection import train_test_split
 import tensorflow_model_optimization as tfmot
-from scipy.stats import entropy
+from scipy.stats import entropy, skew, kurtosis
 
 def extract_features(packet_list):
     if not packet_list:
-        return np.zeros(10)
+        return np.zeros(12)
     packet_sizes = [len(packet[0]) for packet in packet_list]
     inter_arrival_times = np.diff([packet[1] for packet in packet_list])
-    size_stats = [np.mean(packet_sizes), np.std(packet_sizes), np.min(packet_sizes), np.max(packet_sizes)]
-    inter_arrival_stats = [np.mean(inter_arrival_times), np.std(inter_arrival_times) if len(inter_arrival_times) > 0 else 0]
+    size_stats = [np.mean(packet_sizes), np.std(packet_sizes), np.min(packet_sizes), np.max(packet_sizes), skew(packet_sizes), kurtosis(packet_sizes)]
+    inter_arrival_stats = [np.mean(inter_arrival_times), np.std(inter_arrival_times) if len(inter_arrival_times) > 0 else 0, skew(inter_arrival_times) if len(inter_arrival_times) > 0 else 0, kurtosis(inter_arrival_times) if len(inter_arrival_times) > 0 else 0]
     entropy_vals = [entropy(np.histogram(packet[0], bins=256)[0]) for packet in packet_list]
     feature_vector = size_stats + inter_arrival_stats + [np.mean(entropy_vals)]
     return np.array(feature_vector)
@@ -51,23 +51,23 @@ def build_cnn_gru_model(input_shape):
     input_layer = Input(shape=input_shape)
     x = TimeDistributed(Conv3D(filters=32, kernel_size=(3, 3, 3), activation='relu'))(input_layer)
     x = TimeDistributed(MaxPooling3D(pool_size=(2, 2, 2)))(x)
-    x = TimeDistributed(Dropout(0.5))(x)
+    x = TimeDistributed(Dropout(0.3))(x)
     x = TimeDistributed(Conv3D(filters=64, kernel_size=(3, 3, 3), activation='relu'))(x)
     x = TimeDistributed(MaxPooling3D(pool_size=(2, 2, 2)))(x)
-    x = TimeDistributed(Dropout(0.5))(x)
+    x = TimeDistributed(Dropout(0.3))(x)
     x = TimeDistributed(Conv3D(filters=128, kernel_size=(3, 3, 3), activation='relu'))(x)
     x = TimeDistributed(MaxPooling3D(pool_size=(2, 2, 2)))(x)
-    x = TimeDistributed(Dropout(0.5))(x)
+    x = TimeDistributed(Dropout(0.3))(x)
     x = TimeDistributed(Flatten())(x)
     x = GRU(128, activation='relu', return_sequences=True)(x)
-    x = Dropout(0.5)(x)
+    x = Dropout(0.3)(x)
     x = GRU(64, activation='relu')(x)
-    x = Dropout(0.5)(x)
-    x = Dense(128, activation='relu')(x)
-    x = Dropout(0.5)(x)
+    x = Dropout(0.3)(x)
+    x = Dense(64, activation='relu')(x)
+    x = Dropout(0.3)(x)
     output_layer = Dense(1, activation='sigmoid')(x)
     model = Model(inputs=input_layer, outputs=output_layer)
-    model.compile(optimizer=Adam(), loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
     return model
 
 def quantize_model(model):
