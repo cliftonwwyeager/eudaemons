@@ -1,13 +1,14 @@
 import dpkt
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, Input, GRU, TimeDistributed, SeparableConv2D, BatchNormalization
+from tensorflow.keras.layers import SeparableConv2D, MaxPooling2D, Flatten, Dense, Dropout, Input, GRU, TimeDistributed, BatchNormalization
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.model_selection import train_test_split
 import tensorflow_model_optimization as tfmot
 from scipy.stats import entropy, skew, kurtosis
+from bayes_opt import BayesianOptimization
 
 def extract_features(packet_list):
     if not packet_list:
@@ -47,30 +48,30 @@ def process_pcap_to_bytes(file_path, max_packet_length=1500):
     packets = [extract_features(packet_list)]
     return np.array(packets), np.array(labels)
 
-def build_cnn_gru_model(input_shape):
+def build_cnn_gru_model(input_shape, learning_rate, dropout_rate, gru_units):
     input_layer = Input(shape=input_shape)
     x = TimeDistributed(SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu'))(input_layer)
     x = TimeDistributed(BatchNormalization())(x)
     x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
-    x = TimeDistributed(Dropout(0.3))(x)
+    x = TimeDistributed(Dropout(dropout_rate))(x)
     x = TimeDistributed(SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu'))(x)
     x = TimeDistributed(BatchNormalization())(x)
     x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
-    x = TimeDistributed(Dropout(0.3))(x)
+    x = TimeDistributed(Dropout(dropout_rate))(x)
     x = TimeDistributed(SeparableConv2D(filters=128, kernel_size=(3, 3), activation='relu'))(x)
     x = TimeDistributed(BatchNormalization())(x)
     x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
-    x = TimeDistributed(Dropout(0.3))(x)
+    x = TimeDistributed(Dropout(dropout_rate))(x)
     x = TimeDistributed(Flatten())(x)
-    x = GRU(128, activation='relu', return_sequences=True)(x)
-    x = Dropout(0.3)(x)
-    x = GRU(64, activation='relu')(x)
-    x = Dropout(0.3)(x)
+    x = GRU(gru_units, activation='relu', return_sequences=True)(x)
+    x = Dropout(dropout_rate)(x)
+    x = GRU(gru_units // 2, activation='relu')(x)
+    x = Dropout(dropout_rate)(x)
     x = Dense(64, activation='relu')(x)
-    x = Dropout(0.3)(x)
+    x = Dropout(dropout_rate)(x)
     output_layer = Dense(1, activation='sigmoid')(x)
     model = Model(inputs=input_layer, outputs=output_layer)
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer=Adam(learning_rate=learning_rate), loss='binary_crossentropy', metrics=['accuracy'])
     return model
 
 def quantize_model(model):
@@ -84,13 +85,35 @@ def train_on_gpu(model, X_train, y_train, X_val, y_val, epochs=50, batch_size=32
                   callbacks=[early_stopping, reduce_lr])
     return model
 
-def process_and_train(file_path):
+def process_and_train(file_path, learning_rate, dropout_rate, gru_units):
     packets, labels = process_pcap_to_bytes(file_path)
-    packets = packets.reshape(-1, packets.shape[1])
+    packets = packets.reshape(-1, packets.shape[1], 1)
     X_train, X_test, y_train, y_test = train_test_split(packets, labels, test_size=0.2, random_state=42)
-    cnn_gru_model = build_cnn_gru_model((1, packets.shape[1], 1))
+    cnn_gru_model = build_cnn_gru_model((packets.shape[1], packets.shape[2], 1), learning_rate, dropout_rate, gru_units)
     trained_cnn_gru_model = train_on_gpu(cnn_gru_model, X_train, y_train, X_test, y_test)
-    trained_cnn_gru_model.save('optimized_cnn_gru_model.h5')
-    return trained_cnn_gru_model
+    loss, accuracy = trained_cnn_gru_model.evaluate(X_test, y_test)
+    return loss, accuracy
 
-cnn_gru_model = process_and_train('path_to_pcap_file.pcap')
+def objective(learning_rate, dropout_rate, gru_units):
+    file_path = 'path_to_pcap_file.pcap'
+    loss, accuracy = process_and_train(file_path, learning_rate, dropout_rate, gru_units)
+    return -accuracy
+
+pbounds = {
+    'learning_rate': (1e-5, 1e-2),
+    'dropout_rate': (0.1, 0.5),
+    'gru_units': (32, 256)
+}
+
+optimizer = BayesianOptimization(
+    f=objective,
+    pbounds=pbounds,
+    random_state=42,
+)
+
+optimizer.maximize(
+    init_points=2,
+    n_iter=10,
+)
+
+print(optimizer.max)
