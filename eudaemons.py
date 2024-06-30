@@ -1,7 +1,7 @@
 import dpkt
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.layers import Conv3D, MaxPooling3D, Flatten, Dense, Dropout, Input, GRU, TimeDistributed
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, Input, GRU, TimeDistributed, SeparableConv2D, BatchNormalization
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
@@ -49,14 +49,17 @@ def process_pcap_to_bytes(file_path, max_packet_length=1500):
 
 def build_cnn_gru_model(input_shape):
     input_layer = Input(shape=input_shape)
-    x = TimeDistributed(Conv3D(filters=32, kernel_size=(3, 3, 3), activation='relu'))(input_layer)
-    x = TimeDistributed(MaxPooling3D(pool_size=(2, 2, 2)))(x)
+    x = TimeDistributed(SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu'))(input_layer)
+    x = TimeDistributed(BatchNormalization())(x)
+    x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
     x = TimeDistributed(Dropout(0.3))(x)
-    x = TimeDistributed(Conv3D(filters=64, kernel_size=(3, 3, 3), activation='relu'))(x)
-    x = TimeDistributed(MaxPooling3D(pool_size=(2, 2, 2)))(x)
+    x = TimeDistributed(SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu'))(x)
+    x = TimeDistributed(BatchNormalization())(x)
+    x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
     x = TimeDistributed(Dropout(0.3))(x)
-    x = TimeDistributed(Conv3D(filters=128, kernel_size=(3, 3, 3), activation='relu'))(x)
-    x = TimeDistributed(MaxPooling3D(pool_size=(2, 2, 2)))(x)
+    x = TimeDistributed(SeparableConv2D(filters=128, kernel_size=(3, 3), activation='relu'))(x)
+    x = TimeDistributed(BatchNormalization())(x)
+    x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
     x = TimeDistributed(Dropout(0.3))(x)
     x = TimeDistributed(Flatten())(x)
     x = GRU(128, activation='relu', return_sequences=True)(x)
@@ -85,7 +88,7 @@ def process_and_train(file_path):
     packets, labels = process_pcap_to_bytes(file_path)
     packets = packets.reshape(-1, packets.shape[1])
     X_train, X_test, y_train, y_test = train_test_split(packets, labels, test_size=0.2, random_state=42)
-    cnn_gru_model = build_cnn_gru_model((1, packets.shape[1]))
+    cnn_gru_model = build_cnn_gru_model((1, packets.shape[1], 1))
     trained_cnn_gru_model = train_on_gpu(cnn_gru_model, X_train, y_train, X_test, y_test)
     trained_cnn_gru_model.save('optimized_cnn_gru_model.h5')
     return trained_cnn_gru_model
