@@ -8,7 +8,38 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.model_selection import train_test_split
 import tensorflow_model_optimization as tfmot
 from scipy.stats import entropy, skew, kurtosis
-from bayes_opt import BayesianOptimization
+import tensorflow.distribute as tfdistribute
+
+strategy = tfdistribute.MirroredStrategy()
+
+with strategy.scope():
+    def build_model(input_shape):
+        inputs = Input(shape=input_shape)
+        x = SeparableConv2D(32, (3, 3), activation='relu')(inputs)
+        x = MaxPooling2D((2, 2))(x)
+        x = BatchNormalization()(x)
+        x = SeparableConv2D(64, (3, 3), activation='relu')(x)
+        x = MaxPooling2D((2, 2))(x)
+        x = BatchNormalization()(x)
+        x = Flatten()(x)
+        x = Dense(128, activation='relu')(x)
+        x = Dropout(0.5)(x)
+        outputs = Dense(1, activation='sigmoid')(x)
+        model = Model(inputs, outputs)
+        return model
+    model = build_model((128, 128, 1))
+    model.compile(optimizer=Adam(learning_rate=0.001),
+                  loss='binary_crossentropy',
+                  metrics=['accuracy'])
+    early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.0001)
+
+with strategy.scope():
+    history = model.fit(train_data, train_labels, 
+                        validation_data=(val_data, val_labels), 
+                        epochs=100, 
+                        callbacks=[early_stopping, reduce_lr],
+                        batch_size=64)
 
 def extract_features(packet_list):
     if not packet_list:
