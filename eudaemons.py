@@ -27,7 +27,9 @@ with strategy.scope():
         outputs = Dense(1, activation='sigmoid')(x)
         model = Model(inputs, outputs)
         return model
+
     model = build_model((128, 128, 1))
+    model = tfmot.quantization.keras.quantize_model(model)
     model.compile(optimizer=Adam(learning_rate=0.001),
                   loss='binary_crossentropy',
                   metrics=['accuracy'])
@@ -102,6 +104,7 @@ def build_cnn_gru_model(input_shape, learning_rate, dropout_rate, gru_units):
     x = Dropout(dropout_rate)(x)
     output_layer = Dense(1, activation='sigmoid')(x)
     model = Model(inputs=input_layer, outputs=output_layer)
+    model = tfmot.quantization.keras.quantize_model(model)
     model.compile(optimizer=Adam(learning_rate=learning_rate), loss='binary_crossentropy', metrics=['accuracy'])
     return model
 
