@@ -7,4 +7,4 @@
 YM.    ,  MM    MM `Mb    MM  8M   MM YM.    ,  MM    MM    MM YA.   ,A9 MM    MM  L.   I8     
  `Mbmmd'  `Mbod"YML.`Wbmd"MML.`Moo9^Yo.`Mbmmd'.JMML  JMML  JMML.`Ybmd9'.JMML  JMML.M9mmmP'
 
-Neural network to detect anomalies from network packet captures, Elastic Stack/Fortigate integration - v1.0.5
+Neural network to detect anomalies from network packet captures, Elastic Stack/Fortigate integration - v1.0.6
