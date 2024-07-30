@@ -9,6 +9,8 @@ from sklearn.model_selection import train_test_split
 import tensorflow_model_optimization as tfmot
 from scipy.stats import entropy, skew, kurtosis
 import tensorflow.distribute as tfdistribute
+from collections import deque
+import random
 
 strategy = tfdistribute.MirroredStrategy()
 
@@ -108,8 +110,44 @@ def build_cnn_gru_model(input_shape, learning_rate, dropout_rate, gru_units):
     model.compile(optimizer=Adam(learning_rate=learning_rate), loss='binary_crossentropy', metrics=['accuracy'])
     return model
 
-def quantize_model(model):
-    return tfmot.quantization.keras.quantize_model(model)
+class AnomalyDetectionAgent:
+    def __init__(self, state_size, action_size):
+        self.state_size = state_size
+        self.action_size = action_size
+        self.memory = deque(maxlen=2000)
+        self.gamma = 0.95  # discount rate
+        self.epsilon = 1.0  # exploration rate
+        self.epsilon_min = 0.01
+        self.epsilon_decay = 0.995
+        self.learning_rate = 0.001
+        self.model = build_cnn_gru_model(state_size, self.learning_rate, 0.2, 128)
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
+
+    def act(self, state):
+        if np.random.rand() <= self.epsilon:
+            return random.randrange(self.action_size)
+        act_values = self.model.predict(state)
+        return np.argmax(act_values[0])  # returns action
+
+    def replay(self, batch_size):
+        minibatch = random.sample(self.memory, batch_size)
+        for state, action, reward, next_state, done in minibatch:
+            target = reward
+            if not done:
+                target = (reward + self.gamma * np.amax(self.model.predict(next_state)[0]))
+            target_f = self.model.predict(state)
+            target_f[0][action] = target
+            self.model.fit(state, target_f, epochs=1, verbose=0)
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
+
+    def load(self, name):
+        self.model.load_weights(name)
+
+    def save(self, name):
+        self.model.save_weights(name)
 
 def train_on_gpu(model, X_train, y_train, X_val, y_val, epochs=50, batch_size=32):
     with tf.device('/GPU:0'):
@@ -138,6 +176,8 @@ pbounds = {
     'dropout_rate': (0.1, 0.5),
     'gru_units': (32, 256)
 }
+
+from bayes_opt import BayesianOptimization
 
 optimizer = BayesianOptimization(
     f=objective,
