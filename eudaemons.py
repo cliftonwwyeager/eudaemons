@@ -38,13 +38,6 @@ with strategy.scope():
     early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.0001)
 
-with strategy.scope():
-    history = model.fit(train_data, train_labels, 
-                        validation_data=(val_data, val_labels), 
-                        epochs=100, 
-                        callbacks=[early_stopping, reduce_lr],
-                        batch_size=64)
-
 def extract_features(packet_list):
     if not packet_list:
         return np.zeros(12)
@@ -83,44 +76,67 @@ def process_pcap_to_bytes(file_path, max_packet_length=1500):
     packets = [extract_features(packet_list)]
     return np.array(packets), np.array(labels)
 
-def build_cnn_gru_model(input_shape, learning_rate, dropout_rate, gru_units):
+def build_cnn_gru_model(input_shape, learning_rate, dropout_rate, gru_units, l2_regularization=0.01):
     input_layer = Input(shape=input_shape)
-    x = TimeDistributed(SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu'))(input_layer)
+    x = TimeDistributed(SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization)))(input_layer)
     x = TimeDistributed(BatchNormalization())(x)
     x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
     x = TimeDistributed(Dropout(dropout_rate))(x)
-    x = TimeDistributed(SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu'))(x)
+    x = TimeDistributed(SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization)))(x)
     x = TimeDistributed(BatchNormalization())(x)
     x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
     x = TimeDistributed(Dropout(dropout_rate))(x)
-    x = TimeDistributed(SeparableConv2D(filters=128, kernel_size=(3, 3), activation='relu'))(x)
+    x = TimeDistributed(SeparableConv2D(filters=128, kernel_size=(3, 3), activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization)))(x)
     x = TimeDistributed(BatchNormalization())(x)
     x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
     x = TimeDistributed(Dropout(dropout_rate))(x)
     x = TimeDistributed(Flatten())(x)
-    x = GRU(gru_units, activation='relu', return_sequences=True)(x)
+    x = GRU(gru_units, activation='relu', return_sequences=True, kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
     x = Dropout(dropout_rate)(x)
-    x = GRU(gru_units // 2, activation='relu')(x)
-    x = Dropout(dropout_rate)(x)
-    x = Dense(64, activation='relu')(x)
-    x = Dropout(dropout_rate)(x)
+    x = GRU(gru_units // 2, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
+    x = Dropout(dropout_rate))(x)
+    x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
+    x = Dropout(dropout_rate))(x)
     output_layer = Dense(1, activation='sigmoid')(x)
     model = Model(inputs=input_layer, outputs=output_layer)
     model = tfmot.quantization.keras.quantize_model(model)
     model.compile(optimizer=Adam(learning_rate=learning_rate), loss='binary_crossentropy', metrics=['accuracy'])
     return model
 
-class AnomalyDetectionAgent:
-    def __init__(self, state_size, action_size):
+class DoubleDQNAgent:
+    def __init__(self, state_size, action_size, learning_rate=0.001, gamma=0.95, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995, batch_size=64, memory_size=2000):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=2000)
-        self.gamma = 0.95  # discount rate
-        self.epsilon = 1.0  # exploration rate
-        self.epsilon_min = 0.01
-        self.epsilon_decay = 0.995
-        self.learning_rate = 0.001
-        self.model = build_cnn_gru_model(state_size, self.learning_rate, 0.2, 128)
+        self.memory = deque(maxlen=memory_size)
+        self.gamma = gamma  # discount rate
+        self.epsilon = epsilon  # exploration rate
+        self.epsilon_min = epsilon_min
+        self.epsilon_decay = epsilon_decay
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.model = self._build_model()
+        self.target_model = self._build_model()
+        self.update_target_model()
+
+    def _build_model(self):
+        input_layer = Input(shape=self.state_size)
+        x = TimeDistributed(SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu'))(input_layer)
+        x = TimeDistributed(BatchNormalization())(x)
+        x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
+        x = TimeDistributed(Flatten())(x)
+        x = GRU(128, activation='relu', return_sequences=True)(x)
+        x = Dropout(0.2)(x)
+        x = GRU(64, activation='relu')(x)
+        x = Dropout(0.2)(x)
+        x = Dense(64, activation='relu')(x)
+        x = Dropout(0.2)(x)
+        output_layer = Dense(self.action_size, activation='linear')(x)
+        model = Model(inputs=input_layer, outputs=output_layer)
+        model.compile(optimizer=tf.keras.optimizers.Adam(lr=self.learning_rate), loss='mse')
+        return model
+
+    def update_target_model(self):
+        self.target_model.set_weights(self.model.get_weights())
 
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
@@ -129,17 +145,20 @@ class AnomalyDetectionAgent:
         if np.random.rand() <= self.epsilon:
             return random.randrange(self.action_size)
         act_values = self.model.predict(state)
-        return np.argmax(act_values[0])  # returns action
+        return np.argmax(act_values[0])  # action return
 
-    def replay(self, batch_size):
-        minibatch = random.sample(self.memory, batch_size)
+    def replay(self):
+        if len(self.memory) < self.batch_size:
+            return
+        minibatch = random.sample(self.memory, self.batch_size)
         for state, action, reward, next_state, done in minibatch:
-            target = reward
-            if not done:
-                target = (reward + self.gamma * np.amax(self.model.predict(next_state)[0]))
-            target_f = self.model.predict(state)
-            target_f[0][action] = target
-            self.model.fit(state, target_f, epochs=1, verbose=0)
+            target = self.model.predict(state)
+            if done:
+                target[0][action] = reward
+            else:
+                t = self.target_model.predict(next_state)[0]
+                target[0][action] = reward + self.gamma * np.amax(t)
+            self.model.fit(state, target, epochs=1, verbose=0)
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
@@ -157,12 +176,23 @@ def train_on_gpu(model, X_train, y_train, X_val, y_val, epochs=50, batch_size=32
                   callbacks=[early_stopping, reduce_lr])
     return model
 
+def train_on_cpu(model, X_train, y_train, X_val, y_val, epochs=50, batch_size=32):
+    with tf.device('/CPU:0'):
+        early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+        reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=1e-6)
+        model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, validation_data=(X_val, y_val),
+                  callbacks=[early_stopping, reduce_lr])
+    return model
+
 def process_and_train(file_path, learning_rate, dropout_rate, gru_units):
     packets, labels = process_pcap_to_bytes(file_path)
     packets = packets.reshape(-1, packets.shape[1], 1)
     X_train, X_test, y_train, y_test = train_test_split(packets, labels, test_size=0.2, random_state=42)
     cnn_gru_model = build_cnn_gru_model((packets.shape[1], packets.shape[2], 1), learning_rate, dropout_rate, gru_units)
-    trained_cnn_gru_model = train_on_gpu(cnn_gru_model, X_train, y_train, X_test, y_test)
+    if tf.config.list_physical_devices('GPU'):
+        trained_cnn_gru_model = train_on_gpu(cnn_gru_model, X_train, y_train, X_test, y_test)
+    else:
+        trained_cnn_gru_model = train_on_cpu(cnn_gru_model, X_train, y_train, X_test, y_test)
     loss, accuracy = trained_cnn_gru_model.evaluate(X_test, y_test)
     return loss, accuracy
 
@@ -183,6 +213,8 @@ optimizer = BayesianOptimization(
     f=objective,
     pbounds=pbounds,
     random_state=42,
+    acq='ei',
+    xi=0.06 # Hyperparameter exploration rate
 )
 
 optimizer.maximize(
