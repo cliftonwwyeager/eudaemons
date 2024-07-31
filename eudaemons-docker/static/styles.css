@@ -1,0 +1,137 @@
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f0f0f0;
+    color: #333;
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    width: 80%;
+    max-width: 800px;
+    margin: auto;
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    text-align: center;
+}
+
+h1 {
+    color: #444;
+    margin-bottom: 20px;
+}
+
+nav ul {
+    list-style-type: none;
+    padding: 0;
+    text-align: center;
+}
+
+nav ul li {
+    display: inline;
+    margin-right: 20px;
+}
+
+nav ul li a {
+    text-decoration: none;
+    color: #007BFF;
+}
+
+nav ul li a:hover {
+    text-decoration: underline;
+}
+
+.terminal {
+    background-color: #000;
+    color: #0f0;
+    padding: 20px;
+    margin: 20px 0;
+    border-radius: 10px;
+    height: 200px;
+    overflow-y: scroll;
+    font-family: monospace;
+}
+
+button {
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+#elastic-exports, #blocked-ips-list {
+    margin-top: 20px;
+    text-align: left;
+}
+
+.event-item {
+    border-bottom: 1px solid #ddd;
+    padding: 10px;
+    margin-bottom: 10px;
+}
+
+.event-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.event-header > div {
+    flex: 1;
+}
+
+.event-header strong {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.event-details {
+    display: none;
+    margin-top: 10px;
+    background-color: #f9f9f9;
+    padding: 10px;
+    border-radius: 5px;
+    border: 1px solid #ddd;
+}
+
+.event-details pre {
+    background-color: #eee;
+    padding: 10px;
+    border-radius: 5px;
+    overflow-x: auto;
+}
+
+.expand-btn {
+    background-color: #007BFF;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    cursor: pointer;
+    border-radius: 5px;
+    font-size: 14px;
+}
+
+.expand-btn:hover {
+    background-color: #0056b3;
+}
+
+.error {
+    color: red;
+    margin-top: 20px;
+    text-align: center;
+}
+
+@media (max-width: 600px) {
+    .event-header {
+        flex-direction: column;
+    }
+
+    .event-header > div {
+        margin-bottom: 10px;
+    }
+
+    .expand-btn {
+        width: 100%;
+    }
+}
