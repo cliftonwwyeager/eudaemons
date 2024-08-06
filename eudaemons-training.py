@@ -9,6 +9,30 @@ from sklearn.model_selection import train_test_split
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
+from sklearn.decomposition import PCA
+from sklearn.feature_extraction.text import TfidfTransformer
+
+class SyntheticDataGenerator:
+    def __init__(self, max_packet_length=1500):
+        self.max_packet_length = max_packet_length
+
+    def generate_normal_traffic(self, num_packets):
+        packets = []
+        for _ in range(num_packets):
+            packet_length = np.random.randint(40, self.max_packet_length)
+            packet = np.random.randint(0, 256, packet_length, dtype=np.uint8)
+            packet = np.pad(packet, (0, self.max_packet_length - len(packet)), 'constant')
+            packets.append(packet)
+        return np.array(packets), np.zeros(num_packets)
+
+    def generate_anomalous_traffic(self, num_packets):
+        packets = []
+        for _ in range(num_packets):
+            packet_length = np.random.randint(40, self.max_packet_length)
+            packet = np.random.randint(0, 256, packet_length, dtype=np.uint8)
+            packet = np.pad(packet, (0, self.max_packet_length - len(packet)), 'constant')
+            packets.append(packet)
+        return np.array(packets), np.ones(num_packets)
 
 class CNN_GRU(nn.Module):
     def __init__(self, input_channels, dropout_rate, gru_units):
@@ -26,7 +50,7 @@ class CNN_GRU(nn.Module):
         self.fc1 = nn.Linear(gru_units, 64)
         self.dropout = nn.Dropout(dropout_rate)
         self.fc2 = nn.Linear(64, 1)
-        
+
     def forward(self, x):
         batch_size, time_steps, C, H, W = x.size()
         c_in = x.view(batch_size * time_steps, C, H, W)
@@ -50,31 +74,6 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         return self.data[idx], self.labels[idx]
 
-def process_pcap_to_bytes(file_path, max_packet_length=1500):
-    packets = []
-    labels = []
-    with open(file_path, 'rb') as f:
-        pcap = dpkt.pcap.Reader(f)
-        for timestamp, buf in pcap:
-            eth = dpkt.ethernet.Ethernet(buf)
-            if not isinstance(eth.data, dpkt.ip.IP):
-                continue
-            ip = eth.data
-            if not isinstance(ip.data, (dpkt.tcp.TCP, dpkt.udp.UDP)):
-                continue
-            transport = ip.data
-            packet_bytes = np.frombuffer(buf, dtype=np.uint8)
-            if len(packet_bytes) > max_packet_length:
-                packet_bytes = packet_bytes[:max_packet_length]
-            elif len(packet_bytes) < max_packet_length:
-                packet_bytes = np.pad(packet_bytes, (0, max_packet_length - len(packet_bytes)), 'constant')
-            packets.append(packet_bytes)
-            if transport.sport == 21 or transport.dport == 22:
-                labels.append(1)
-            else:
-                labels.append(0)
-    return np.array(packets), np.array(labels)
-
 def data_augmentation(data):
     augmented_data = []
     for packet in data:
@@ -86,21 +85,23 @@ def train(rank, world_size, data, labels, epochs, batch_size, learning_rate, dro
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
     device = torch.device("cuda", rank)
-
     X_train, X_val, y_train, y_val = train_test_split(data, labels, test_size=0.2, random_state=42)
+    pca = PCA(n_components=100)
+    X_train = pca.fit_transform(X_train.reshape(len(X_train), -1))
+    X_val = pca.transform(X_val.reshape(len(X_val), -1))
+    tfidf = TfidfTransformer()
+    X_train = tfidf.fit_transform(X_train).toarray()
+    X_val = tfidf.transform(X_val).toarray()
     train_dataset = CustomDataset(X_train, y_train)
     val_dataset = CustomDataset(X_val, y_val)
-
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
     model = CNN_GRU(input_channels=1, dropout_rate=dropout_rate, gru_units=gru_units).to(device)
     model = DDP(model, device_ids=[rank])
     criterion = nn.BCELoss().to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=5, min_lr=1e-6)
-
     best_accuracy = 0.0
     best_model_path = f"best_model_{rank}.pth"
 
@@ -156,14 +157,14 @@ def main():
     batch_size = 32
     epochs = 10
     world_size = 2
-
-    file_path = 'path_to_pcap_file.pcap'
-    packets, labels = process_pcap_to_bytes(file_path)
+    generator = SyntheticDataGenerator()
+    normal_packets, normal_labels = generator.generate_normal_traffic(10000)
+    anomalous_packets, anomalous_labels = generator.generate_anomalous_traffic(2000)
+    packets = np.concatenate((normal_packets, anomalous_packets), axis=0)
+    labels = np.concatenate((normal_labels, anomalous_labels), axis=0)
     packets = packets.reshape(-1, 1, 1, 128, 128)
     labels = labels.astype(np.float32)
-
     packets = data_augmentation(packets)
-
     setup(0, world_size, packets, labels, epochs, batch_size, learning_rate, dropout_rate, gru_units)
 
 if __name__ == "__main__":
