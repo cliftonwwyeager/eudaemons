@@ -1,5 +1,5 @@
 Flask==2.1.1
-pyshark==0.4.4.7
+pyshark==0.6
 scapy==2.5.0
 tensorflow==2.17.0
 tensorflow-model-optimization==0.8.0
