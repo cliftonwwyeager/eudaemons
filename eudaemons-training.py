@@ -34,9 +34,9 @@ class SyntheticDataGenerator:
             packets.append(packet)
         return np.array(packets), np.ones(num_packets)
 
-class CNN_GRU(nn.Module):
-    def __init__(self, input_channels, dropout_rate, gru_units):
-        super(CNN_GRU, self).__init__()
+class CNN_LSTM(nn.Module):
+    def __init__(self, input_channels, dropout_rate, lstm_units):
+        super(CNN_LSTM, self).__init__()
         self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(32)
         self.pool1 = nn.MaxPool2d(2, 2)
@@ -46,8 +46,8 @@ class CNN_GRU(nn.Module):
         self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm2d(128)
         self.pool3 = nn.MaxPool2d(2, 2)
-        self.gru = nn.GRU(128 * 16 * 16, gru_units, batch_first=True)
-        self.fc1 = nn.Linear(gru_units, 64)
+        self.lstm = nn.LSTM(128 * 16 * 16, lstm_units, batch_first=True)
+        self.fc1 = nn.Linear(lstm_units, 64)
         self.dropout = nn.Dropout(dropout_rate)
         self.fc2 = nn.Linear(64, 1)
 
@@ -58,7 +58,7 @@ class CNN_GRU(nn.Module):
         c_out = self.pool2(self.bn2(torch.relu(self.conv2(c_out))))
         c_out = self.pool3(self.bn3(torch.relu(self.conv3(c_out))))
         r_in = c_out.view(batch_size, time_steps, -1)
-        r_out, _ = self.gru(r_in)
+        r_out, _ = self.lstm(r_in)
         r_out = self.dropout(torch.relu(self.fc1(r_out[:, -1, :])))
         out = torch.sigmoid(self.fc2(r_out))
         return out
@@ -81,7 +81,7 @@ def data_augmentation(data):
         augmented_data.append(packet + noise)
     return np.array(augmented_data)
 
-def train(rank, world_size, data, labels, epochs, batch_size, learning_rate, dropout_rate, gru_units):
+def train(rank, world_size, data, labels, epochs, batch_size, learning_rate, dropout_rate, lstm_units):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
     device = torch.device("cuda", rank)
@@ -97,7 +97,7 @@ def train(rank, world_size, data, labels, epochs, batch_size, learning_rate, dro
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    model = CNN_GRU(input_channels=1, dropout_rate=dropout_rate, gru_units=gru_units).to(device)
+    model = CNN_LSTM(input_channels=1, dropout_rate=dropout_rate, lstm_units=lstm_units).to(device)
     model = DDP(model, device_ids=[rank])
     criterion = nn.BCELoss().to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
@@ -146,13 +146,13 @@ def train(rank, world_size, data, labels, epochs, batch_size, learning_rate, dro
 
     dist.destroy_process_group()
 
-def setup(rank, world_size, data, labels, epochs, batch_size, learning_rate, dropout_rate, gru_units):
-    mp.spawn(train, args=(world_size, data, labels, epochs, batch_size, learning_rate, dropout_rate, gru_units), nprocs=world_size, join=True)
+def setup(rank, world_size, data, labels, epochs, batch_size, learning_rate, dropout_rate, lstm_units):
+    mp.spawn(train, args=(world_size, data, labels, epochs, batch_size, learning_rate, dropout_rate, lstm_units), nprocs=world_size, join=True)
 
 def main():
     input_channels = 1
     dropout_rate = 0.5
-    gru_units = 128
+    lstm_units = 128
     learning_rate = 0.001
     batch_size = 32
     epochs = 10
@@ -165,7 +165,7 @@ def main():
     packets = packets.reshape(-1, 1, 1, 128, 128)
     labels = labels.astype(np.float32)
     packets = data_augmentation(packets)
-    setup(0, world_size, packets, labels, epochs, batch_size, learning_rate, dropout_rate, gru_units)
+    setup(0, world_size, packets, labels, epochs, batch_size, learning_rate, dropout_rate, lstm_units)
 
 if __name__ == "__main__":
     main()
