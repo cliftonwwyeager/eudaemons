@@ -50,6 +50,33 @@ class GroupNormalization(tf.keras.layers.Layer):
         mean, variance = tf.nn.moments(reshaped_inputs, [2, 3, 4], keepdims=True)
         inputs = (reshaped_inputs - mean) / (tf.sqrt(variance + self.epsilon))
         inputs = tf.keras.backend.reshape(inputs, tensor_input_shape)
+
+def build_cnn_lstm_model(input_shape, learning_rate, dropout_rate, lstm_units, l2_regularization=0.01):
+    input_layer = Input(shape=input_shape)
+    x = TimeDistributed(SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization)))(input_layer)
+    x = TimeDistributed(GroupNormalization(groups=32))(x)
+    x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
+    x = TimeDistributed(Dropout(dropout_rate))(x)
+    x = TimeDistributed(SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization)))(x)
+    x = TimeDistributed(GroupNormalization(groups=32))(x)
+    x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
+    x = TimeDistributed(Dropout(dropout_rate))(x)
+    x = TimeDistributed(SeparableConv2D(filters=128, kernel_size=(3, 3), activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization)))(x)
+    x = TimeDistributed(GroupNormalization(groups=32))(x)
+    x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
+    x = TimeDistributed(Dropout(dropout_rate))(x)
+    x = TimeDistributed(Flatten())(x)
+    x = LSTM(lstm_units, activation='relu', return_sequences=True, kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
+    x = Dropout(dropout_rate)(x)
+    x = LSTM(lstm_units // 2, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
+    x = Dropout(dropout_rate)(x)
+    x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
+    x = Dropout(dropout_rate)(x)
+    output_layer = Dense(1, activation='sigmoid')(x)
+    model = Model(inputs=input_layer, outputs=output_layer)
+    model = tfmot.quantization.keras.quantize_model(model)
+    model.compile(optimizer=Adam(learning_rate=learning_rate), loss='binary_crossentropy', metrics=['accuracy'])
+    return model
         return self.gamma * inputs + self.beta
 
     def get_config(self):
@@ -77,7 +104,7 @@ with strategy.scope():
         model = Model(inputs, outputs)
         return model
 
-    def build_cnn_gru_model(input_shape, learning_rate, dropout_rate, gru_units, l2_regularization=0.01):
+    def build_cnn_lstm_model(input_shape, learning_rate, dropout_rate, gru_units, l2_regularization=0.01):
         input_layer = Input(shape=input_shape)
         x = TimeDistributed(SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization)))(input_layer)
         x = TimeDistributed(GroupNormalization(groups=32))(x)
@@ -92,9 +119,9 @@ with strategy.scope():
         x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
         x = TimeDistributed(Dropout(dropout_rate))(x)
         x = TimeDistributed(Flatten())(x)
-        x = GRU(gru_units, activation='relu', return_sequences=True, kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
+        x = LSTM(gru_units, activation='relu', return_sequences=True, kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
         x = Dropout(dropout_rate)(x)
-        x = GRU(gru_units // 2, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
+        x = LSTM(gru_units // 2, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
         x = Dropout(dropout_rate)(x)
         x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(l2_regularization))(x)
         x = Dropout(dropout_rate)(x)
@@ -171,9 +198,9 @@ class DoubleDQNAgent:
         x = TimeDistributed(GroupNormalization(groups=32))(x)
         x = TimeDistributed(MaxPooling2D(pool_size=(2, 2)))(x)
         x = TimeDistributed(Flatten())(x)
-        x = GRU(128, activation='relu', return_sequences=True)(x)
+        x = LSTM(128, activation='relu', return_sequences=True)(x)
         x = Dropout(0.2)(x)
-        x = GRU(64, activation='relu')(x)
+        x = LSTM(64, activation='relu')(x)
         x = Dropout(0.2)(x)
         x = Dense(64, activation='relu')(x)
         x = Dropout(0.2)(x)
@@ -235,12 +262,12 @@ def process_and_train(file_path, learning_rate, dropout_rate, gru_units):
     packets, labels = process_pcap_to_bytes(file_path)
     packets = packets.reshape(-1, packets.shape[1], 1)
     X_train, X_test, y_train, y_test = train_test_split(packets, labels, test_size=0.2, random_state=42)
-    cnn_gru_model = build_cnn_gru_model((packets.shape[1], packets.shape[2], 1), learning_rate, dropout_rate, gru_units)
+    cnn_lstm_model = build_cnn_lstm_model((packets.shape[1], packets.shape[2], 1), learning_rate, dropout_rate, gru_units)
     if tf.config.list_physical_devices('GPU'):
-        trained_cnn_gru_model = train_on_gpu(cnn_gru_model, X_train, y_train, X_test, y_test)
+        trained_cnn_lstm_model = train_on_gpu(cnn_gru_model, X_train, y_train, X_test, y_test)
     else:
-        trained_cnn_gru_model = train_on_cpu(cnn_gru_model, X_train, y_train, X_test, y_test)
-    loss, accuracy = trained_cnn_gru_model.evaluate(X_test, y_test)
+        trained_cnn_lstm_model = train_on_cpu(cnn_gru_model, X_train, y_train, X_test, y_test)
+    loss, accuracy = trained_cnn_lstm_model.evaluate(X_test, y_test)
     return loss, accuracy
 
 def objective(learning_rate, dropout_rate, gru_units):
