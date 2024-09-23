@@ -5,7 +5,7 @@ tensorflow==2.17.0
 tensorflow-model-optimization==0.8.0
 tensorflow-distribute==2.5.0
 numpy==2.1.0
-pandas==1.3.0
+pandas==2.2.3
 dpkt==1.9.7.2
 sklearn==0.0.post12
 fortiosapi==1.0.5
