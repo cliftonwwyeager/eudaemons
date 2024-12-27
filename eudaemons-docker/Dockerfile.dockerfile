@@ -1,21 +1,13 @@
-# Base image for Python
-FROM python:3.10-slim
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-
-# Set work directory
+FROM python:3.9-slim
 WORKDIR /app
+COPY app.py /app/
+# Copy your model/scaler if present
+# COPY trained_model.h5 /app/
+# COPY scaler.pkl /app/
 
-# Install dependencies
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir flask requests scapy pandas numpy scikit-learn tensorflow==2.9.1
+RUN pip install --no-cache-dir scipy
 
-# Copy application code
-COPY . /app/
-
-# Expose port 8000 for the web app
-EXPOSE 8000
-
-# Start the web app using Gunicorn
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8000", "app:app"]
+ENV FIREWALL_URL=https://fortigate.example.com
+EXPOSE 9500
+CMD ["python", "app.py", "--port", "9500"]
