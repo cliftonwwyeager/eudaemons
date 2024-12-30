@@ -10,4 +10,4 @@ dpkt==1.9.7.2
 sklearn==0.0.post12
 fortiosapi==1.0.5
 requests==2.32.3
-bayesian-optimization==2.0.0
+bayesian-optimization==2.0.3
