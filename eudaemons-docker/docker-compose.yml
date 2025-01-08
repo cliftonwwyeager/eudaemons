@@ -1,21 +1,53 @@
 version: '3.9'
+
 services:
-  flask_app:
+  flask-app:
+    build: .
+    container_name: flask-app
+    environment:
+      FIREWALL_URL: "https://fortigate.example.com"
+      SIEM_TYPE: "elastic"
+      ELASTIC_URL: "http://localhost:9200/firewall-logs/_doc"
+      CORTEX_URL: "http://cortex.example.com/api/logs"
+      SPLUNK_URL: "http://splunk.example.com:8088/services/collector"
+      SENTINEL_URL: "https://sentinel.example.com/api/logs"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+    volumes:
+      - ./logs:/var/log
+    depends_on:
+      - redis
+
+  model-backend:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: anomaly_flask
-    expose:
-      - "9500"
+      dockerfile: Dockerfile.model
+    container_name: model-backend
+    command: python eudaemons.py
     environment:
-      - FIREWALL_URL=https://fortigate.example.com
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
 
   nginx:
     image: nginx:latest
-    container_name: anomaly_nginx
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - flask_app
+    container_name: nginx
     ports:
-      - "9500:9500"
+      - "8081:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - flask-app
+      - model-backend
+
+volumes:
+  redis_data:
