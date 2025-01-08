@@ -15,12 +15,18 @@ from scipy.stats import median_abs_deviation
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
 
-ANOMALIES_LOG = []
-LOGSTASH_STATUS = []
-FIREWALL_URL = os.environ.get("FIREWALL_URL", "https://fortigate.example.com")
 app = Flask(__name__)
+ANOMALIES_LOG = []
+MODEL_PERFORMANCE = []
+EXPORTED_LOGS = []
+FIREWALL_URL = os.environ.get("FIREWALL_URL", "https://fortigate.example.com")
+SIEM_TYPE = os.environ.get("SIEM_TYPE", "elastic")
+ELASTIC_URL = os.environ.get("ELASTIC_URL", "http://localhost:9200/firewall-logs/_doc")
+CORTEX_URL = os.environ.get("CORTEX_URL", "http://cortex.example.com/api/logs")
+SPLUNK_URL = os.environ.get("SPLUNK_URL", "http://splunk.example.com:8088/services/collector")
+SENTINEL_URL = os.environ.get("SENTINEL_URL", "https://sentinel.example.com/api/logs")
 
-HTML = """
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
@@ -40,12 +46,12 @@ HTML = """
   </style>
 </head>
 <body>
-  <h1>Firewall Log Anomaly Detection</h1>
+  <h1>Firewall Log LSTM Anomaly Detection</h1>
   <form method="POST" action="/analyze">
-    <button type="submit">Analyze Firewall Logs &amp; Detect Anomalies</button>
+    <button type="submit">Analyze Firewall Logs</button>
   </form>
   <form method="POST" action="/export">
-    <button type="submit">Export Anomalies to Logstash</button>
+    <button type="submit">Export Anomalies to SIEM</button>
   </form>
   <h2>Detected Anomalies</h2>
   <div class="scroll-box">
@@ -53,32 +59,38 @@ HTML = """
       <div>{{ a }}</div>
     {% endfor %}
   </div>
-  <h2>Logstash Export Status</h2>
+  <h2>Model Performance</h2>
   <div class="scroll-box">
-    {% for s in statuses %}
-      <div>{{ s }}</div>
+    {% for p in performance %}
+      <div>{{ p }}</div>
+    {% endfor %}
+  </div>
+  <h2>Exported Anomalies</h2>
+  <div class="scroll-box">
+    {% for e in exported %}
+      <div>{{ e }}</div>
     {% endfor %}
   </div>
 </body>
 </html>
 """
 
-def determine_firewall_vendor(url: str) -> str:
-    u = url.lower()
-    if "forti" in u:
+def determine_firewall_vendor(url):
+    lower_url = url.lower()
+    if "forti" in lower_url:
         return "FortiGate"
-    elif "palo" in u or "pan" in u:
+    elif "palo" in lower_url or "pan" in lower_url:
         return "PaloAlto"
     return "Unknown"
 
-def get_log_location(vendor: str) -> str:
+def get_log_location(vendor):
     if vendor == "FortiGate":
         return "/var/log/fortigate/traffic.log"
     elif vendor == "PaloAlto":
         return "/var/log/paloalto/traffic.log"
     return ""
 
-def load_firewall_logs(path: str) -> pd.DataFrame:
+def load_firewall_logs(path):
     if not os.path.exists(path):
         logging.error(f"Log file not found at {path}")
         return pd.DataFrame()
@@ -90,7 +102,7 @@ def load_firewall_logs(path: str) -> pd.DataFrame:
                 data.append(json.loads(line))
     return pd.DataFrame(data)
 
-def logs_to_features(df: pd.DataFrame) -> np.ndarray:
+def logs_to_features(df):
     if "application" in df.columns:
         le = LabelEncoder()
         df["application_enc"] = le.fit_transform(df["application"].astype(str))
@@ -115,88 +127,164 @@ def logs_to_features(df: pd.DataFrame) -> np.ndarray:
         if c not in df.columns:
             df[c] = 0
     data = df[cols].astype(np.float32)
-    sc = MinMaxScaler()
-    return sc.fit_transform(data)
+    return data
 
-def detect_anomalies_from_logs(df: pd.DataFrame):
+def reshape_for_lstm(X):
+    return np.reshape(X, (X.shape[0], 1, X.shape[1]))
+
+def detect_lstm_anomalies(df):
     try:
-        model = tf.keras.models.load_model('trained_model.h5')
+        model = tf.keras.models.load_model("lstm_autoencoder.h5")
     except:
-        logging.error("Cannot load 'trained_model.h5'.")
-        return []
+        logging.error("Cannot load 'lstm_autoencoder.h5'.")
+        return [], {}
     try:
-        with open('scaler.pkl','rb') as fh:
+        with open("scaler.pkl","rb") as fh:
             scaler = pickle.load(fh)
     except:
         logging.error("Cannot load 'scaler.pkl'.")
-        return []
+        return [], {}
     feats = logs_to_features(df)
-    if len(feats) == 0:
-        return []
-    feats_scaled = scaler.transform(feats)
-    preds = model.predict(feats_scaled)
-    med = np.median(preds)
-    mad = median_abs_deviation(preds, scale='normal')
-    factor = 3.0
-    threshold = med + factor * mad
-    anom_idx = np.where(preds > threshold)[0]
-    res = []
-    for i in anom_idx:
+    if feats.empty:
+        return [], {}
+    scaled = scaler.transform(feats)
+    reshaped = reshape_for_lstm(scaled)
+    recon = model.predict(reshaped)
+    errors = np.mean(np.square(reshaped - recon), axis=(1,2))
+    median_err = np.median(errors)
+    mad = median_abs_deviation(errors, scale="normal")
+    threshold = median_err + 3.0 * mad
+    anomalies_idx = np.where(errors > threshold)[0]
+    anomalies = []
+    for i in anomalies_idx:
         row = df.iloc[i]
-        sinfo = f"src:{row.get('src_ip','?')} dst:{row.get('dst_ip','?')} app:{row.get('application','?')}"
-        res.append(sinfo)
-    return res
+        info = f"src:{row.get('src_ip','?')} dst:{row.get('dst_ip','?')} app:{row.get('application','?')}"
+        anomalies.append(info)
+    performance_info = {
+        "threshold": threshold,
+        "median_error": median_err,
+        "mad": mad
+    }
+    return anomalies, performance_info
 
-def export_to_logstash(anomalies):
-    url = "http://localhost:5044"
-    for e in anomalies:
-        doc = {"timestamp": datetime.utcnow().isoformat(), "event": e}
-        try:
-            r = requests.post(url, json=doc)
-            if r.status_code == 200:
-                m = f"Sent: {doc}"
-                LOGSTASH_STATUS.append(m)
-                logging.info(m)
-            else:
-                m = f"Logstash error {r.status_code}"
-                LOGSTASH_STATUS.append(m)
-                logging.error(m)
-        except Exception as err:
-            m = f"Export error: {err}"
-            LOGSTASH_STATUS.append(m)
-            logging.error(m)
+def export_anomalies_to_siem(anomalies):
+    exported = []
+    now = datetime.utcnow().isoformat()
+    if SIEM_TYPE.lower() == "elastic":
+        for a in anomalies:
+            doc = {"timestamp": now, "event": a}
+            try:
+                r = requests.post(ELASTIC_URL, json=doc)
+                if r.status_code in [200, 201]:
+                    exported.append(f"Exported to Elastic: {a}")
+                else:
+                    exported.append(f"Failed Elastic: {r.text}")
+            except Exception as err:
+                exported.append(f"Error Elastic: {err}")
+    elif SIEM_TYPE.lower() == "cortex":
+        for a in anomalies:
+            doc = {"timestamp": now, "event": a}
+            try:
+                r = requests.post(CORTEX_URL, json=doc)
+                if r.status_code in [200, 201]:
+                    exported.append(f"Exported to Cortex: {a}")
+                else:
+                    exported.append(f"Failed Cortex: {r.text}")
+            except Exception as err:
+                exported.append(f"Error Cortex: {err}")
+    elif SIEM_TYPE.lower() == "splunk":
+        headers = {"Authorization": "Splunk <token>"}
+        for a in anomalies:
+            doc = {"time": now, "event": a}
+            try:
+                r = requests.post(SPLUNK_URL, json=doc, headers=headers)
+                if r.status_code in [200, 201]:
+                    exported.append(f"Exported to Splunk: {a}")
+                else:
+                    exported.append(f"Failed Splunk: {r.text}")
+            except Exception as err:
+                exported.append(f"Error Splunk: {err}")
+    elif SIEM_TYPE.lower() == "sentinel":
+        for a in anomalies:
+            doc = {"timestamp": now, "event": a}
+            try:
+                r = requests.post(SENTINEL_URL, json=doc)
+                if r.status_code in [200, 201]:
+                    exported.append(f"Exported to Sentinel: {a}")
+                else:
+                    exported.append(f"Failed Sentinel: {r.text}")
+            except Exception as err:
+                exported.append(f"Error Sentinel: {err}")
+    return exported
 
 @app.route("/", methods=["GET"])
 def index():
-    return render_template_string(HTML, anomalies=ANOMALIES_LOG, statuses=LOGSTASH_STATUS)
+    return render_template_string(
+        HTML_TEMPLATE,
+        anomalies=ANOMALIES_LOG,
+        performance=MODEL_PERFORMANCE,
+        exported=EXPORTED_LOGS
+    )
 
 @app.route("/analyze", methods=["POST"])
 def analyze_logs():
-    v = determine_firewall_vendor(FIREWALL_URL)
-    path = get_log_location(v)
+    ANOMALIES_LOG.clear()
+    MODEL_PERFORMANCE.clear()
+    vendor = determine_firewall_vendor(FIREWALL_URL)
+    path = get_log_location(vendor)
     if not path:
         ANOMALIES_LOG.append("Unknown vendor or missing log path.")
-        return render_template_string(HTML, anomalies=ANOMALIES_LOG, statuses=LOGSTASH_STATUS)
+        return render_template_string(
+            HTML_TEMPLATE,
+            anomalies=ANOMALIES_LOG,
+            performance=MODEL_PERFORMANCE,
+            exported=EXPORTED_LOGS
+        )
     df = load_firewall_logs(path)
     if df.empty:
         ANOMALIES_LOG.append("No logs found.")
-        return render_template_string(HTML, anomalies=ANOMALIES_LOG, statuses=LOGSTASH_STATUS)
-    res = detect_anomalies_from_logs(df)
-    if res:
-        for r in res:
-            ANOMALIES_LOG.append(f"Anomaly: {r}")
+        return render_template_string(
+            HTML_TEMPLATE,
+            anomalies=ANOMALIES_LOG,
+            performance=MODEL_PERFORMANCE,
+            exported=EXPORTED_LOGS
+        )
+    anomalies, perf_info = detect_lstm_anomalies(df)
+    if anomalies:
+        for a in anomalies:
+            ANOMALIES_LOG.append(f"Anomaly: {a}")
     else:
         ANOMALIES_LOG.append("No anomalies detected.")
-    return render_template_string(HTML, anomalies=ANOMALIES_LOG, statuses=LOGSTASH_STATUS)
+    if perf_info:
+        MODEL_PERFORMANCE.append(f"Threshold: {perf_info['threshold']:.6f}")
+        MODEL_PERFORMANCE.append(f"Median Error: {perf_info['median_error']:.6f}")
+        MODEL_PERFORMANCE.append(f"MAD: {perf_info['mad']:.6f}")
+    return render_template_string(
+        HTML_TEMPLATE,
+        anomalies=ANOMALIES_LOG,
+        performance=MODEL_PERFORMANCE,
+        exported=EXPORTED_LOGS
+    )
 
 @app.route("/export", methods=["POST"])
 def export_anomalies():
+    EXPORTED_LOGS.clear()
     if not ANOMALIES_LOG:
-        LOGSTASH_STATUS.append("No anomalies logged.")
+        EXPORTED_LOGS.append("No anomalies to export.")
     else:
-        a = [x.replace("Anomaly: ","") for x in ANOMALIES_LOG if x.startswith("Anomaly:")]
-        export_to_logstash(a)
-    return render_template_string(HTML, anomalies=ANOMALIES_LOG, statuses=LOGSTASH_STATUS)
+        anomalies = [x.replace("Anomaly: ", "") for x in ANOMALIES_LOG if x.startswith("Anomaly:")]
+        if anomalies:
+            result = export_anomalies_to_siem(anomalies)
+            for r in result:
+                EXPORTED_LOGS.append(r)
+        else:
+            EXPORTED_LOGS.append("No anomalies to export.")
+    return render_template_string(
+        HTML_TEMPLATE,
+        anomalies=ANOMALIES_LOG,
+        performance=MODEL_PERFORMANCE,
+        exported=EXPORTED_LOGS
+    )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
