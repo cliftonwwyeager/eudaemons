@@ -2,6 +2,7 @@ Flask==3.1.0
 pyshark==0.6
 tensorflow==2.18.0
 scapy==2.6.1
+scipy==1.9.3
 tensorflow-model-optimization==0.8.0
 tensorflow-distribute==2.5.0
 pandas==2.2.3
@@ -11,3 +12,5 @@ sklearn==0.0.post12
 fortiosapi==1.0.5
 requests==2.32.3
 bayesian-optimization==2.0.3
+redis==4.4.2
+pan-python==0.16.0
