@@ -44,6 +44,7 @@ HTML_TEMPLATE = """
       padding: 5px;
     }
   </style>
+  <script src="scripts.js"></script>
 </head>
 <body>
   <h1>Firewall Log LSTM Anomaly Detection</h1>
