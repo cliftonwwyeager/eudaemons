@@ -3,21 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Network Anomaly Detection</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>EUDAEMONS</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
-    <div class="container">
-        <h1>Network Anomaly Detection</h1>
-        <div class="terminal" id="training-output"></div>
-        <button id="train-btn">Train Model</button>
-        <nav>
-            <ul>
-                <li><a href="/elastic-exports">Anomalies</a></li>
-                <li><a href="/fgt">Blocked IPs</a></li>
-            </ul>
-        </nav>
+    <h1>Network Traffic Anomaly Detection</h1>
+    <form method="POST" action="/analyze">
+        <button type="submit">Analyze Firewall Logs</button>
+    </form>
+    <form method="POST" action="/export">
+        <button type="submit">Export Anomalies to SIEM</button>
+    </form>
+    <h2>Detected Anomalies</h2>
+    <div class="scroll-box">
+        {% for a in anomalies %}
+            <div>{{ a }}</div>
+        {% endfor %}
     </div>
-    <script src="scripts.js"></script>
+    <h2>Model Performance</h2>
+    <div class="scroll-box">
+        {% for p in performance %}
+            <div>{{ p }}</div>
+        {% endfor %}
+    </div>
+    <h2>Exported Anomalies</h2>
+    <div class="scroll-box">
+        {% for e in exported %}
+            <div>{{ e }}</div>
+        {% endfor %}
+    </div>
 </body>
 </html>
