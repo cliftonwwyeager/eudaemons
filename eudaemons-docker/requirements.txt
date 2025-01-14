@@ -13,4 +13,4 @@ fortiosapi==1.0.5
 requests==2.32.3
 bayesian-optimization==2.0.3
 redis==4.4.2
-pan-python==0.16.0
+pan-python==0.25.0
