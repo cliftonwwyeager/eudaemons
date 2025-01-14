@@ -2,7 +2,7 @@ Flask==3.1.0
 pyshark==0.6
 tensorflow==2.18.0
 scapy==2.6.1
-scipy==1.9.3
+scipy==1.15.1
 tensorflow-model-optimization==0.8.0
 tensorflow-distribute==2.5.0
 pandas==2.2.3
