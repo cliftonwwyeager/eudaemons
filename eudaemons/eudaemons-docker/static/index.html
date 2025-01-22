@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EUDAEMONS</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+    <h1>Network Traffic Anomaly Detection</h1>
+    <form method="POST" action="/analyze">
+        <button type="submit">Analyze Firewall Logs</button>
+    </form>
+    <form method="POST" action="/export">
+        <button type="submit">Export Anomalies to SIEM</button>
+    </form>
+    <h2>Detected Anomalies</h2>
+    <div class="scroll-box">
+        {% for a in anomalies %}
+            <div>{{ a }}</div>
+        {% endfor %}
+    </div>
+    <h2>Model Performance</h2>
+    <div class="scroll-box">
+        {% for p in performance %}
+            <div>{{ p }}</div>
+        {% endfor %}
+    </div>
+    <h2>Exported Anomalies</h2>
+    <div class="scroll-box">
+        {% for e in exported %}
+            <div>{{ e }}</div>
+        {% endfor %}
+    </div>
+</body>
+</html>
