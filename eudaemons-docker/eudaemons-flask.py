@@ -47,7 +47,7 @@ HTML_TEMPLATE = """
   <script src="scripts.js"></script>
 </head>
 <body>
-  <h1>Firewall Log LSTM Anomaly Detection</h1>
+  <h1>Eudaemons v1.10.2</h1>
   <form method="POST" action="/analyze">
     <button type="submit">Analyze Firewall Logs</button>
   </form>
