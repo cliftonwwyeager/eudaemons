@@ -1,104 +1,22 @@
 body {
-    background-color: #000;
-    color: #00FF00;
-    font-family: 'Courier New', Courier, monospace;
-    margin: 0;
-    padding: 0;
+  background-color: #000;
+  color: #00FF00;
+  font-family: monospace;
+  margin: 0;
+  padding: 20px;
 }
 
-h1, h2 {
-    color: #00FF00;
-    text-shadow: 0 0 8px #00FF00;
-    margin: 20px 0 10px;
-    text-align: center;
+h1 {
+  text-align: center;
 }
 
-.scroll-box {
-    background-color: #111;
-    color: #00FF00;
-    border: 1px solid #00FF00;
-    border-radius: 5px;
-    padding: 10px;
-    height: 300px;
-    overflow-y: auto;
-    box-shadow: 0 0 10px #00FF00;
-    margin: 20px auto;
-    width: 80%;
-}
-
-button {
-    background-color: #00FF00;
-    color: #000;
-    border: 1px solid #00FF00;
-    border-radius: 5px;
-    padding: 10px 20px;
-    font-size: 16px;
-    font-family: 'Courier New', Courier, monospace;
-    cursor: pointer;
-    margin: 10px;
-    text-transform: uppercase;
-    box-shadow: 0 0 10px #00FF00;
-    transition: background-color 0.3s ease, color 0.3s ease;
-}
-
-button:hover {
-    background-color: #000;
-    color: #00FF00;
-}
-
-a {
-    color: #00FF00;
-    text-decoration: none;
-    font-weight: bold;
-}
-
-a:hover {
-    text-decoration: underline;
-    color: #00CC00;
-}
-
-form {
-    text-align: center;
-    margin: 20px 0;
-}
-
-.container {
-    width: 90%;
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 20px;
-    text-align: center;
-}
-
-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 20px 0;
-    background-color: #111;
-    color: #00FF00;
-    border: 1px solid #00FF00;
-    text-align: left;
-    font-size: 14px;
-}
-
-th, td {
-    border: 1px solid #00FF00;
-    padding: 8px;
-}
-
-th {
-    background-color: #000;
-    color: #00FF00;
-    text-align: center;
-}
-
-@media (max-width: 768px) {
-    .scroll-box {
-        width: 95%;
-    }
-
-    button {
-        width: 90%;
-        font-size: 14px;
-    }
+#terminal {
+  height: 400px;
+  overflow-y: auto;
+  border: 1px solid #00FF00;
+  padding: 5px;
+  background-color: #000;
+  color: #00FF00;
+  font-family: monospace;
+  margin-top: 20px;
 }
