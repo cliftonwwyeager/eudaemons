@@ -26,26 +26,20 @@ This application provides a comprehensive pipeline for detecting anomalies in ne
 
 All required Python dependencies are listed in the [`requirements.txt`](./requirements.txt) file. To install them, run:
 
-```bash
-pip install -r requirements.txt
+`pip install -r requirements.txt`
 
 ## Docker Compose Setup
 
-Build and Run
+Clone the Repository:
 
-    Clone the Repository:
-
-```bash
-   git clone <repository-url>
-   cd <repository-directory>
+   `git clone <repository-url>`
+   `cd <repository-directory>`
 
 Build the Docker Image and Start the Services:
-
-```bash
-    docker-compose up --build
-
+    `docker-compose up --build`
+    
     Access the Web Interface:
-
+    
     Open your browser and navigate to http://localhost:9500.
 
 ## Application Usage
