@@ -187,7 +187,6 @@ def filter_df_by_date_range(df, start_date, end_date, date_col="timestamp"):
 
 def preprocess_logs_for_model(df):
     df = df.copy()
-    # Encode application if available
     if "application" in df.columns:
         app_encoder = LabelEncoder()
         df["application_enc"] = app_encoder.fit_transform(df["application"].astype(str))
@@ -226,9 +225,6 @@ def create_sequences(data, window_size=10):
     return np.array(sequences)
 
 def build_enhanced_autoencoder(input_shape, latent_dim=32, dropout_rate=0.3, learning_rate=1e-3):
-    """
-    Builds an enhanced autoencoder model using a combination of Conv1D and stacked LSTM layers.
-    """
     model = Sequential()
     model.add(Conv1D(filters=64, kernel_size=3, activation='relu', padding='same', input_shape=input_shape))
     model.add(BatchNormalization())
@@ -330,12 +326,10 @@ def main_pipeline(firewall_url,
         logger.error("No logs to process.")
         return
 
-    # Sort logs by timestamp if available
     if "timestamp" in df_logs.columns:
         df_logs["timestamp"] = pd.to_datetime(df_logs["timestamp"], errors='coerce')
         df_logs.sort_values("timestamp", inplace=True)
 
-    # Determine training mode: baseline vs. all logs
     if baseline_start and baseline_end:
         try:
             s_date = pd.to_datetime(baseline_start)
