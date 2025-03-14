@@ -8,9 +8,10 @@ tensorflow-distribute==2.5.0
 pandas==2.2.3
 numpy==1.21.6
 dpkt==1.9.7.2
-sklearn==0.0.post12
+scikit-learn==1.2.2
 fortiosapi==1.0.5
 requests==2.32.3
 bayesian-optimization==2.0.3
 redis==5.2.1
 pan-python==0.25.0
+meraki==1.2.2
