@@ -30,11 +30,6 @@ All required Python dependencies are listed in the [`requirements.txt`](./requir
 
 ## Docker Compose Setup
 
-Clone the Repository:
-
-   `git clone <repository-url>`
-   `cd <repository-directory>`
-
 Build the Docker Image and Start the Services:
     `docker-compose up --build`
     
