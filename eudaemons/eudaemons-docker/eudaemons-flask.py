@@ -9,7 +9,6 @@ import pandas as pd
 import tensorflow as tf
 from flask import Flask, request, render_template_string
 from datetime import datetime
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from scipy.stats import median_abs_deviation
 
@@ -19,6 +18,7 @@ app = Flask(__name__)
 ANOMALIES_LOG = []
 MODEL_PERFORMANCE = []
 EXPORTED_LOGS = []
+
 FIREWALL_URL = os.environ.get("FIREWALL_URL", "https://fortigate.example.com")
 SIEM_TYPE = os.environ.get("SIEM_TYPE", "elastic")
 ELASTIC_URL = os.environ.get("ELASTIC_URL", "http://localhost:9200/firewall-logs/_doc")
@@ -47,7 +47,7 @@ HTML_TEMPLATE = """
   <script src="scripts.js"></script>
 </head>
 <body>
-  <h1>Eudaemons v1.10.2</h1>
+  <h1>Eudaemons v1.10.3</h1>
   <form method="POST" action="/analyze">
     <button type="submit">Analyze Firewall Logs</button>
   </form>
@@ -82,6 +82,10 @@ def determine_firewall_vendor(url):
         return "FortiGate"
     elif "palo" in lower_url or "pan" in lower_url:
         return "PaloAlto"
+    elif "sonic" in lower_url:
+        return "SonicWall"
+    elif "meraki" in lower_url:
+        return "Meraki"
     return "Unknown"
 
 def get_log_location(vendor):
@@ -89,6 +93,10 @@ def get_log_location(vendor):
         return "/var/log/fortigate/traffic.log"
     elif vendor == "PaloAlto":
         return "/var/log/paloalto/traffic.log"
+    elif vendor == "SonicWall":
+        return "/var/log/sonicwall/traffic.log"
+    elif vendor == "Meraki":
+        return "/var/log/meraki/traffic.log"
     return ""
 
 def load_firewall_logs(path):
@@ -104,63 +112,82 @@ def load_firewall_logs(path):
     return pd.DataFrame(data)
 
 def logs_to_features(df):
+    df = df.copy()
     if "application" in df.columns:
         le = LabelEncoder()
         df["application_enc"] = le.fit_transform(df["application"].astype(str))
     else:
         df["application_enc"] = 0
+
     def ip_to_int(ip):
         try:
             parts = ip.split(".")
             return (int(parts[0]) << 24) + (int(parts[1]) << 16) + (int(parts[2]) << 8) + int(parts[3])
-        except:
+        except Exception:
             return 0
+
     if "src_ip" in df.columns:
         df["src_ip_int"] = df["src_ip"].apply(ip_to_int)
     else:
         df["src_ip_int"] = 0
+
     if "dst_ip" in df.columns:
         df["dst_ip_int"] = df["dst_ip"].apply(ip_to_int)
     else:
         df["dst_ip_int"] = 0
-    cols = ["src_ip_int","dst_ip_int","src_port","dst_port","application_enc"]
+
+    cols = ["src_ip_int", "dst_ip_int", "src_port", "dst_port", "application_enc"]
     for c in cols:
         if c not in df.columns:
             df[c] = 0
     data = df[cols].astype(np.float32)
     return data
 
-def reshape_for_lstm(X):
-    return np.reshape(X, (X.shape[0], 1, X.shape[1]))
+def create_sequences(data, window_size=10):
+    sequences = []
+    for i in range(len(data) - window_size + 1):
+        sequences.append(data[i:i+window_size])
+    return np.array(sequences)
 
-def detect_lstm_anomalies(df):
+def detect_enhanced_anomalies(df, window_size=10):
     try:
-        model = tf.keras.models.load_model("lstm_autoencoder.h5")
-    except:
-        logging.error("Cannot load 'lstm_autoencoder.h5'.")
+        model = tf.keras.models.load_model("enhanced_autoencoder.h5")
+    except Exception as e:
+        logging.error(f"Cannot load 'enhanced_autoencoder.h5': {e}")
         return [], {}
+
     try:
-        with open("scaler.pkl","rb") as fh:
+        with open("scaler.pkl", "rb") as fh:
             scaler = pickle.load(fh)
-    except:
-        logging.error("Cannot load 'scaler.pkl'.")
+    except Exception as e:
+        logging.error(f"Cannot load 'scaler.pkl': {e}")
         return [], {}
+
     feats = logs_to_features(df)
-    if feats.empty:
+    if feats.empty or len(feats) < window_size:
+        logging.error("Not enough logs to create sequences for enhanced detection.")
         return [], {}
+
     scaled = scaler.transform(feats)
-    reshaped = reshape_for_lstm(scaled)
-    recon = model.predict(reshaped)
-    errors = np.mean(np.square(reshaped - recon), axis=(1,2))
+    sequences = create_sequences(scaled, window_size=window_size)
+    reconstructions = model.predict(sequences)
+    errors = np.mean(np.square(sequences - reconstructions), axis=(1, 2))
     median_err = np.median(errors)
     mad = median_abs_deviation(errors, scale="normal")
     threshold = median_err + 3.0 * mad
-    anomalies_idx = np.where(errors > threshold)[0]
+    anomaly_seq_indices = np.where(errors > threshold)[0]
+    anomaly_indices = set()
+    for i in anomaly_seq_indices:
+        anomaly_indices.update(range(i, i + window_size))
+    anomaly_indices = sorted(list(anomaly_indices))
+
     anomalies = []
-    for i in anomalies_idx:
-        row = df.iloc[i]
-        info = f"src:{row.get('src_ip','?')} dst:{row.get('dst_ip','?')} app:{row.get('application','?')}"
-        anomalies.append(info)
+    for idx in anomaly_indices:
+        if idx < len(df):
+            row = df.iloc[idx]
+            info = f"src:{row.get('src_ip','?')} dst:{row.get('dst_ip','?')} app:{row.get('application','?')}"
+            anomalies.append(info)
+    
     performance_info = {
         "threshold": threshold,
         "median_error": median_err,
@@ -250,7 +277,7 @@ def analyze_logs():
             performance=MODEL_PERFORMANCE,
             exported=EXPORTED_LOGS
         )
-    anomalies, perf_info = detect_lstm_anomalies(df)
+    anomalies, perf_info = detect_enhanced_anomalies(df, window_size=10)
     if anomalies:
         for a in anomalies:
             ANOMALIES_LOG.append(f"Anomaly: {a}")
