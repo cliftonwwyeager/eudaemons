@@ -10,8 +10,7 @@ import pandas as pd
 import redis
 import tensorflow as tf
 from tensorflow.keras import Sequential
-from tensorflow.keras.layers import (Dense, Dropout, BatchNormalization, LSTM,
-                                     RepeatVector, TimeDistributed, Conv1D)
+from tensorflow.keras.layers import (Dense, Dropout, BatchNormalization, LSTM, RepeatVector, TimeDistributed, Conv1D)
 from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.model_selection import train_test_split
