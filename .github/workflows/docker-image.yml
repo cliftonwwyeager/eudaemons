@@ -28,4 +28,4 @@ jobs:
           context: eudaemons/eudaemons-docker
           file: eudaemons/eudaemons-docker/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/eflp:${{ github.sha }}
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/eudaemons:${{ github.sha }}
