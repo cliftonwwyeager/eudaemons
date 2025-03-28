@@ -1,6 +1,6 @@
 ## eudaemons v1.10.4
 
-This application provides a comprehensive pipeline for detecting anomalies in network firewall logs using an enhanced CNN-LSTM autoencoder model. It supports multiple firewall vendors including FortiGate, Palo Alto, SonicWall, and Meraki, and can export detected anomalies to various SIEM platforms (Elastic, Cortex, Splunk, Sentinel).
+This application provides a comprehensive pipeline for detecting anomalies in network firewall logs using an enhanced CNN-LSTM autoencoder model. It supports multiple firewall vendors including FortiGate, Palo Alto, SonicWall, Meraki, and Unifi. Can export detected anomalies to various SIEM platforms (Elastic, Cortex, Splunk, Sentinel).
 
 ## Features
 
