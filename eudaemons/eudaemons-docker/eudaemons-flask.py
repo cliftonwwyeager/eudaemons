@@ -4,17 +4,19 @@ import pickle
 import requests
 import logging
 import argparse
+import threading
+import time
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template, jsonify
 from datetime import datetime
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from scipy.stats import median_abs_deviation
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates', static_folder='static')
 ANOMALIES_LOG = []
 MODEL_PERFORMANCE = []
 EXPORTED_LOGS = []
@@ -26,56 +28,6 @@ CORTEX_URL = os.environ.get("CORTEX_URL", "http://cortex.example.com/api/logs")
 SPLUNK_URL = os.environ.get("SPLUNK_URL", "http://splunk.example.com:8088/services/collector")
 SENTINEL_URL = os.environ.get("SENTINEL_URL", "https://sentinel.example.com/api/logs")
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body {
-      background-color: #000;
-      color: #0f0;
-      font-family: monospace;
-    }
-    .scroll-box {
-      height: 300px;
-      overflow-y: scroll;
-      border: 1px solid #0f0;
-      margin-top: 10px;
-      padding: 5px;
-    }
-  </style>
-  <script src="scripts.js"></script>
-</head>
-<body>
-  <h1>Eudaemons v1.10.3</h1>
-  <form method="POST" action="/analyze">
-    <button type="submit">Analyze Firewall Logs</button>
-  </form>
-  <form method="POST" action="/export">
-    <button type="submit">Export Anomalies to SIEM</button>
-  </form>
-  <h2>Detected Anomalies</h2>
-  <div class="scroll-box">
-    {% for a in anomalies %}
-      <div>{{ a }}</div>
-    {% endfor %}
-  </div>
-  <h2>Model Performance</h2>
-  <div class="scroll-box">
-    {% for p in performance %}
-      <div>{{ p }}</div>
-    {% endfor %}
-  </div>
-  <h2>Exported Anomalies</h2>
-  <div class="scroll-box">
-    {% for e in exported %}
-      <div>{{ e }}</div>
-    {% endfor %}
-  </div>
-</body>
-</html>
-"""
-
 def determine_firewall_vendor(url):
     lower_url = url.lower()
     if "forti" in lower_url:
@@ -86,6 +38,8 @@ def determine_firewall_vendor(url):
         return "SonicWall"
     elif "meraki" in lower_url:
         return "Meraki"
+    elif "unifi" in lower_url:
+        return "Unifi"
     return "Unknown"
 
 def get_log_location(vendor):
@@ -97,6 +51,8 @@ def get_log_location(vendor):
         return "/var/log/sonicwall/traffic.log"
     elif vendor == "Meraki":
         return "/var/log/meraki/traffic.log"
+    elif vendor == "Unifi":
+        return "/var/log/ulog/syslogemu.log"
     return ""
 
 def load_firewall_logs(path):
@@ -108,7 +64,17 @@ def load_firewall_logs(path):
         for line in f:
             line = line.strip()
             if line:
-                data.append(json.loads(line))
+                try:
+                    data.append(json.loads(line))
+                except Exception:
+                    parts = line.split()
+                    log_entry = {}
+                    for part in parts:
+                        if "=" in part:
+                            key, value = part.split("=", 1)
+                            log_entry[key.lower()] = value
+                    if log_entry:
+                        data.append(log_entry)
     return pd.DataFrame(data)
 
 def logs_to_features(df):
@@ -126,12 +92,16 @@ def logs_to_features(df):
         except Exception:
             return 0
 
-    if "src_ip" in df.columns:
+    if "src" in df.columns:
+        df["src_ip_int"] = df["src"].apply(ip_to_int)
+    elif "src_ip" in df.columns:
         df["src_ip_int"] = df["src_ip"].apply(ip_to_int)
     else:
         df["src_ip_int"] = 0
 
-    if "dst_ip" in df.columns:
+    if "dst" in df.columns:
+        df["dst_ip_int"] = df["dst"].apply(ip_to_int)
+    elif "dst_ip" in df.columns:
         df["dst_ip_int"] = df["dst_ip"].apply(ip_to_int)
     else:
         df["dst_ip_int"] = 0
@@ -185,7 +155,7 @@ def detect_enhanced_anomalies(df, window_size=10):
     for idx in anomaly_indices:
         if idx < len(df):
             row = df.iloc[idx]
-            info = f"src:{row.get('src_ip','?')} dst:{row.get('dst_ip','?')} app:{row.get('application','?')}"
+            info = f"src:{row.get('src','?')} dst:{row.get('dst','?')} app:{row.get('application','?')}"
             anomalies.append(info)
     
     performance_info = {
@@ -247,12 +217,10 @@ def export_anomalies_to_siem(anomalies):
 
 @app.route("/", methods=["GET"])
 def index():
-    return render_template_string(
-        HTML_TEMPLATE,
-        anomalies=ANOMALIES_LOG,
-        performance=MODEL_PERFORMANCE,
-        exported=EXPORTED_LOGS
-    )
+    return render_template("index.html",
+                           anomalies=ANOMALIES_LOG,
+                           performance=MODEL_PERFORMANCE,
+                           exported=EXPORTED_LOGS)
 
 @app.route("/analyze", methods=["POST"])
 def analyze_logs():
@@ -262,21 +230,17 @@ def analyze_logs():
     path = get_log_location(vendor)
     if not path:
         ANOMALIES_LOG.append("Unknown vendor or missing log path.")
-        return render_template_string(
-            HTML_TEMPLATE,
-            anomalies=ANOMALIES_LOG,
-            performance=MODEL_PERFORMANCE,
-            exported=EXPORTED_LOGS
-        )
+        return render_template("index.html",
+                               anomalies=ANOMALIES_LOG,
+                               performance=MODEL_PERFORMANCE,
+                               exported=EXPORTED_LOGS)
     df = load_firewall_logs(path)
     if df.empty:
         ANOMALIES_LOG.append("No logs found.")
-        return render_template_string(
-            HTML_TEMPLATE,
-            anomalies=ANOMALIES_LOG,
-            performance=MODEL_PERFORMANCE,
-            exported=EXPORTED_LOGS
-        )
+        return render_template("index.html",
+                               anomalies=ANOMALIES_LOG,
+                               performance=MODEL_PERFORMANCE,
+                               exported=EXPORTED_LOGS)
     anomalies, perf_info = detect_enhanced_anomalies(df, window_size=10)
     if anomalies:
         for a in anomalies:
@@ -287,12 +251,10 @@ def analyze_logs():
         MODEL_PERFORMANCE.append(f"Threshold: {perf_info['threshold']:.6f}")
         MODEL_PERFORMANCE.append(f"Median Error: {perf_info['median_error']:.6f}")
         MODEL_PERFORMANCE.append(f"MAD: {perf_info['mad']:.6f}")
-    return render_template_string(
-        HTML_TEMPLATE,
-        anomalies=ANOMALIES_LOG,
-        performance=MODEL_PERFORMANCE,
-        exported=EXPORTED_LOGS
-    )
+    return render_template("index.html",
+                           anomalies=ANOMALIES_LOG,
+                           performance=MODEL_PERFORMANCE,
+                           exported=EXPORTED_LOGS)
 
 @app.route("/export", methods=["POST"])
 def export_anomalies():
@@ -307,16 +269,25 @@ def export_anomalies():
                 EXPORTED_LOGS.append(r)
         else:
             EXPORTED_LOGS.append("No anomalies to export.")
-    return render_template_string(
-        HTML_TEMPLATE,
-        anomalies=ANOMALIES_LOG,
-        performance=MODEL_PERFORMANCE,
-        exported=EXPORTED_LOGS
-    )
+    return render_template("index.html",
+                           anomalies=ANOMALIES_LOG,
+                           performance=MODEL_PERFORMANCE,
+                           exported=EXPORTED_LOGS)
+
+@app.route("/metrics", methods=["GET"])
+def get_metrics():
+    return jsonify({
+        "anomalies": ANOMALIES_LOG,
+        "performance": MODEL_PERFORMANCE,
+        "exported": EXPORTED_LOGS
+    })
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", default=9500, type=int)
+    args = parser.parse_args()
+    app.run(host=args.host, port=args.port)
     parser.add_argument("--port", default=9500, type=int)
     args = parser.parse_args()
     app.run(host=args.host, port=args.port)
