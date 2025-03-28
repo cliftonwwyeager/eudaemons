@@ -9,11 +9,13 @@ import numpy as np
 import pandas as pd
 import redis
 import tensorflow as tf
-from tensorflow.keras import Sequential
-from tensorflow.keras.layers import (Dense, Dropout, BatchNormalization, LSTM, RepeatVector, TimeDistributed, Conv1D)
+from tensorflow.keras import Model, Input
+from tensorflow.keras.layers import (Dense, Dropout, BatchNormalization, LSTM, RepeatVector, TimeDistributed, Conv1D, Bidirectional, Concatenate)
+from tensorflow.keras.layers import Attention
 from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.model_selection import train_test_split
+import pickle
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 logging.basicConfig(level=logging.INFO)
@@ -35,7 +37,7 @@ def fortigate_login(base_url, username, password):
 def fetch_fortigate_logs(session, token, base_url):
     url = f"{base_url}/api/logs"
     headers = {"X-CSRF-Token": token} if token else {}
-    resp = session.get(url, headers=headers, verify=False)
+    resp = session.post(url, data={}, verify=False)
     if resp.status_code == 200:
         try:
             data = resp.json()
@@ -126,6 +128,8 @@ def determine_firewall_vendor(firewall_url):
         return "SonicWall"
     elif "meraki" in fw_lower:
         return "Meraki"
+    elif "unifi" in fw_lower:
+        return "Unifi"
     else:
         return "Unknown"
 
@@ -166,6 +170,8 @@ def get_log_location(vendor):
         return "/var/log/sonicwall/traffic.log"
     elif vendor == "Meraki":
         return "/var/log/meraki/traffic.log"
+    elif vendor == "Unifi":
+        return "/var/log/ulog/syslogemu.log"
     else:
         return ""
 
@@ -177,7 +183,17 @@ def load_firewall_logs(log_path):
         for line in f:
             line = line.strip()
             if line:
-                data.append(json.loads(line))
+                try:
+                    data.append(json.loads(line))
+                except Exception:
+                    parts = line.split()
+                    log_entry = {}
+                    for part in parts:
+                        if "=" in part:
+                            key, value = part.split("=", 1)
+                            log_entry[key.lower()] = value
+                    if log_entry:
+                        data.append(log_entry)
     logger.info("Loaded logs from local file.")
     return pd.DataFrame(data)
 
@@ -218,27 +234,32 @@ def preprocess_logs_for_model(df):
     data = df[numeric_cols].values.astype(np.float32)
     scaler = MinMaxScaler()
     scaled_data = scaler.fit_transform(data)
-    return scaled_data
+    return scaler, scaled_data
 
 def create_sequences(data, window_size=10):
     sequences = [data[i:i + window_size] for i in range(len(data) - window_size + 1)]
     return np.array(sequences)
 
 def build_enhanced_autoencoder(input_shape, latent_dim=32, dropout_rate=0.3, learning_rate=1e-3):
-    model = Sequential()
-    model.add(Conv1D(filters=64, kernel_size=3, activation='relu', padding='same', input_shape=input_shape))
-    model.add(BatchNormalization())
-    model.add(Dropout(dropout_rate))
-    model.add(LSTM(latent_dim, activation='relu', return_sequences=True))
-    model.add(Dropout(dropout_rate))
-    model.add(LSTM(latent_dim, activation='relu', return_sequences=False))
-    model.add(RepeatVector(input_shape[0]))
-    model.add(LSTM(latent_dim, activation='relu', return_sequences=True))
-    model.add(Dropout(dropout_rate))
-    model.add(LSTM(latent_dim, activation='relu', return_sequences=True))
-    model.add(TimeDistributed(Dense(input_shape[1])))
+    inputs = Input(shape=input_shape)
+    x = Conv1D(filters=64, kernel_size=3, activation='relu', padding='same')(inputs)
+    x = BatchNormalization()(x)
+    x = Dropout(dropout_rate)(x)
+    x = Bidirectional(LSTM(latent_dim, activation='relu', return_sequences=True))(x)
+    x = Dropout(dropout_rate)(x)
+    x = Bidirectional(LSTM(latent_dim, activation='relu', return_sequences=True))(x)
+    # Attention layer to focus on key time steps
+    attention_output = Attention()([x, x])
+    x = Concatenate()([x, attention_output])
+    x = LSTM(latent_dim, activation='relu', return_sequences=False)(x)
+    x = RepeatVector(input_shape[0])(x)
+    x = LSTM(latent_dim, activation='relu', return_sequences=True)(x)
+    x = Dropout(dropout_rate)(x)
+    x = LSTM(latent_dim, activation='relu', return_sequences=True)(x)
+    outputs = TimeDistributed(Dense(input_shape[1]))(x)
+    model = Model(inputs, outputs)
     model.compile(optimizer=Adam(learning_rate), loss='mse')
-    logger.info("Enhanced CNN–LSTM autoencoder built.")
+    logger.info("Enhanced BLSTM-Attention autoencoder built.")
     return model
 
 def train_autoencoder(model, X_train, X_val, epochs=10, batch_size=32):
@@ -330,6 +351,9 @@ def main_pipeline(firewall_url,
         df_logs["timestamp"] = pd.to_datetime(df_logs["timestamp"], errors='coerce')
         df_logs.sort_values("timestamp", inplace=True)
 
+    scaler = None
+    sequences = None
+
     if baseline_start and baseline_end:
         try:
             s_date = pd.to_datetime(baseline_start)
@@ -341,39 +365,44 @@ def main_pipeline(firewall_url,
         if len(df_baseline) < window_size:
             logger.error("Not enough baseline logs to create sequences.")
             return
-        baseline_scaled = preprocess_logs_for_model(df_baseline)
-        baseline_sequences = create_sequences(baseline_scaled, window_size=window_size)
-        X_train, X_val = train_test_split(baseline_sequences, test_size=0.2, random_state=42)
-        model = build_enhanced_autoencoder(input_shape=baseline_sequences.shape[1:])
-        model = train_autoencoder(model, X_train, X_val, epochs=5, batch_size=64)
-        threshold = calculate_dynamic_threshold(model, X_val, percentile=95)
+        scaler, baseline_scaled = preprocess_logs_for_model(df_baseline)
+        sequences = create_sequences(baseline_scaled, window_size=window_size)
+    else:
+        if len(df_logs) < window_size:
+            logger.error("Not enough logs to create sequences.")
+            return
+        scaler, all_scaled = preprocess_logs_for_model(df_logs)
+        sequences = create_sequences(all_scaled, window_size=window_size)
+
+    X_train, X_val = train_test_split(sequences, test_size=0.2, random_state=42)
+    model = build_enhanced_autoencoder(input_shape=sequences.shape[1:])
+    model = train_autoencoder(model, X_train, X_val, epochs=5, batch_size=64)
+    threshold = calculate_dynamic_threshold(model, X_val, percentile=95)
+    if baseline_start and baseline_end:
         df_outside = df_logs[~df_logs.index.isin(df_baseline.index)]
         if len(df_outside) < window_size:
             logger.error("Not enough non-baseline logs to create sequences.")
             return
-        outside_scaled = preprocess_logs_for_model(df_outside)
-        outside_sequences = create_sequences(outside_scaled, window_size=window_size)
-        anomalies_bool, mse = detect_anomalies_autoencoder(model, outside_sequences, threshold)
+        _, outside_scaled = preprocess_logs_for_model(df_outside)
+        sequences_out = create_sequences(outside_scaled, window_size=window_size)
+        anomalies_bool, mse = detect_anomalies_autoencoder(model, sequences_out, threshold)
         anomaly_indices = get_anomaly_indices(anomalies_bool, window_size)
         df_anomalies = df_outside.iloc[anomaly_indices].drop_duplicates()
         anomaly_details = get_anomaly_summary(df_anomalies)
         logger.info(f"Anomaly details (non-baseline logs): {anomaly_details}")
     else:
-        if len(df_logs) < window_size:
-            logger.error("Not enough logs to create sequences.")
-            return
-        all_scaled = preprocess_logs_for_model(df_logs)
-        all_sequences = create_sequences(all_scaled, window_size=window_size)
-        X_train, X_val = train_test_split(all_sequences, test_size=0.2, random_state=42)
-        model = build_enhanced_autoencoder(input_shape=all_sequences.shape[1:])
-        model = train_autoencoder(model, X_train, X_val, epochs=5, batch_size=64)
-        threshold = calculate_dynamic_threshold(model, X_val, percentile=95)
-        anomalies_bool, mse = detect_anomalies_autoencoder(model, all_sequences, threshold)
+        anomalies_bool, mse = detect_anomalies_autoencoder(model, sequences, threshold)
         anomaly_indices = get_anomaly_indices(anomalies_bool, window_size)
         df_anomalies = df_logs.iloc[anomaly_indices].drop_duplicates()
         anomaly_details = get_anomaly_summary(df_anomalies)
         logger.info(f"Anomaly details (all logs): {anomaly_details}")
+
     write_anomaly_report(df_anomalies)
+
+    model.save("enhanced_autoencoder.h5")
+    with open("scaler.pkl", "wb") as fh:
+        pickle.dump(scaler, fh)
+    logger.info("Saved model as 'enhanced_autoencoder.h5' and scaler as 'scaler.pkl'.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Network Traffic Anomaly Detection Pipeline")
