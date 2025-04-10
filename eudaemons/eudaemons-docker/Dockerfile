@@ -7,7 +7,6 @@ COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 COPY eudaemons.py /app/
 COPY eudaemons-flask.py /app/
-COPY templates/ /app/templates/
 COPY static/ /app/static/
 
 EXPOSE 9500
