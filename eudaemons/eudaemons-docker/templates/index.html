@@ -1,0 +1,134 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h2>Eudaemons v1.10.5</h2>
+
+<div class="mb-3">
+  <form method="POST" action="{{ url_for('analyze_logs') }}" style="display:inline;">
+    <button type="submit" class="btn btn-success">Analyze Logs</button>
+  </form>
+  <form method="POST" action="{{ url_for('export_anomalies') }}" style="display:inline;">
+    <button type="submit" class="btn btn-danger">Export Anomalies</button>
+  </form>
+</div>
+
+<div class="row mb-4" id="metrics-section">
+  <div class="col-3">
+    <div class="card text-center">
+      <div class="card-header">Total Logs</div>
+      <div class="card-body">
+        <h4 id="totalLogsVal">0</h4>
+      </div>
+    </div>
+  </div>
+  <div class="col-3">
+    <div class="card text-center">
+      <div class="card-header">Total Anomalies</div>
+      <div class="card-body">
+        <h4 id="totalAnomVal">0</h4>
+      </div>
+    </div>
+  </div>
+  <div class="col-3">
+    <div class="card text-center">
+      <div class="card-header">Ingest Rate (logs/sec)</div>
+      <div class="card-body">
+        <h4 id="ingestRateVal">0.0</h4>
+      </div>
+    </div>
+  </div>
+  <div class="col-3">
+    <div class="card text-center">
+      <div class="card-header">Latency (ms)</div>
+      <div class="card-body">
+        <h4 id="latencyVal">0.0</h4>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row mb-4" id="exports-section">
+  <div class="col-3">
+    <div class="card text-center">
+      <div class="card-header">Elastic Exports</div>
+      <div class="card-body">
+        <h4 id="elasticExports">0</h4>
+      </div>
+    </div>
+  </div>
+  <div class="col-3">
+    <div class="card text-center">
+      <div class="card-header">Splunk Exports</div>
+      <div class="card-body">
+        <h4 id="splunkExports">0</h4>
+      </div>
+    </div>
+  </div>
+  <div class="col-3">
+    <div class="card text-center">
+      <div class="card-header">Cortex Exports</div>
+      <div class="card-body">
+        <h4 id="cortexExports">0</h4>
+      </div>
+    </div>
+  </div>
+  <div class="col-3">
+    <div class="card text-center">
+      <div class="card-header">Sentinel Exports</div>
+      <div class="card-body">
+        <h4 id="sentinelExports">0</h4>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>Detected Anomalies</h3>
+<table class="table table-striped" id="anomalyTable">
+  <thead>
+    <tr>
+      <th>Timestamp</th>
+      <th>Source</th>
+      <th>Destination</th>
+      <th>Application</th>
+      <th>Score</th>
+    </tr>
+  </thead>
+  <tbody>
+  </tbody>
+</table>
+<script>
+  function addNewAnomalyRow(data) {
+    const tableBody = document.querySelector("#anomalyTable tbody");
+    const row = document.createElement("tr");
+
+    row.innerHTML = `
+      <td>${data.timestamp}</td>
+      <td>${data.src}</td>
+      <td>${data.dst}</td>
+      <td>${data.application}</td>
+      <td>${data.score.toFixed(2)}</td>
+    `;
+    tableBody.prepend(row);
+  }
+
+  const socket = io();
+  socket.on('new_anomaly', function(data) {
+    addNewAnomalyRow(data);
+  });
+
+  socket.on('metrics_update', function(data) {
+    document.getElementById("totalLogsVal").innerText = data.total_logs;
+    document.getElementById("totalAnomVal").innerText = data.total_anomalies;
+    document.getElementById("ingestRateVal").innerText = data.ingest_rate.toFixed(1);
+    document.getElementById("latencyVal").innerText = data.latency.toFixed(1);
+    document.getElementById("elasticExports").innerText = data.elastic_exports;
+    document.getElementById("splunkExports").innerText = data.splunk_exports;
+    document.getElementById("cortexExports").innerText = data.cortex_exports;
+    document.getElementById("sentinelExports").innerText = data.sentinel_exports;
+  });
+
+  socket.on('export_update', function(data) {
+    alert(`Exported ${data.exported} anomalies to SIEM(s).`);
+  });
+</script>
+{% endblock content %}
